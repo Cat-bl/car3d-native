@@ -1,0 +1,6 @@
+3D 车模型（car-model.js）
+  名称：2016 Exotic Rides W70
+  作者：Ddiaz Design（https://sketchfab.com/ddiaz-design）
+  来源：https://sketchfab.com/3d-models/2016-exotic-rides-w70-9c2b97cd6e104671a2f90992c64cc849
+  许可：CC BY-NC-SA 4.0（https://creativecommons.org/licenses/by-nc-sa/4.0/）——署名、非商业性使用、相同方式共享
+  改动：压缩了贴图和顶点数据（_tools/gen/car-model.py），卡片里替换了车漆、玻璃、灯的材质，车门、引擎盖、尾箱按车况开合。

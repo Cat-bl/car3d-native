@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 3D 车况（原生版）：车机 Android 10，宿主（com.wzw.bydmodule）的多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.x3card.car3d"
+    android:versionCode="2"
+    android:versionName="0.2">
+
+    <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <queries>
+        <package android:name="com.wzw.bydmodule" />
+    </queries>
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true"
+        android:resizeableActivity="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- 全屏页：从多窗口里点全屏键时在主屏上单独开一个任务；状态栏按设置收起，所以不用全屏主题 -->
+        <activity
+            android:name=".FullActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.x3card.car3d.full"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|uiMode" />
+    </application>
+</manifest>
