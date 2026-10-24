@@ -26,7 +26,7 @@
 
 1. 用电脑浏览器（Chrome、Edge）打开网页版：https://cat-bl.github.io/car3d-web/ （文件在 [Cat-bl/car3d-web](https://github.com/Cat-bl/car3d-web)）。
 2. 点右上角的齿轮，在"车模"里点"导入车模"，再点"调整车模"，标好车门、车窗、车灯，需要的话挂上车牌、贴上贴纸。
-3. 点"导出车模包"，得到一个 .glb 文件。
+3. 点"调整车模"底下的"导出为 GLB"，得到一个 .glb 文件。
 4. 拷到车机上，在这个应用的设置里点"导入车模包"。
 
 打不开时：GitHub 在国内有时连不上，可以换个网络或者过一会儿再试；也可以把网页版下载下来（[Cat-bl/car3d-web](https://github.com/Cat-bl/car3d-web) 页面上的 Code → Download ZIP，或者找能打开的人要一份），解压后用电脑浏览器打开里面的 `index.html`，用法一样。

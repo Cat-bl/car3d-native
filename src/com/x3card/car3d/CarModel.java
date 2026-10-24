@@ -207,7 +207,7 @@ final class CarModel {
     /** 车模包的格式版本（同网页版 carmodel.js 的 PACK_FMT，导出时写在 asset.extras.d3fmt，以前导出的没写当 1）：网页版的车模包里加了这里还显示不了的配置时那边加 1，
      *  这里搬完再跟上；导入比这个新的包照样显示能显示的，提示更新应用 */
     static final int FMT = 1;
-    /** 网页版（调整车模、导出车模包）的网址 */
+    /** 网页版（调整车模、导出为 GLB）的网址 */
     static final String WEB = "cat-bl.github.io/car3d-web";
 
     static File file(Context c) { return new File(c.getFilesDir(), "model.glb"); }
@@ -248,7 +248,7 @@ final class CarModel {
         JSONObject a = Gltf.read(glb).json.optJSONObject("asset");
         return a == null ? null : a.optJSONObject("extras");
     }
-    /** 导入车模包（网页版"导出车模包"的 GLB）：要带配置，存进应用自己的目录。返回车模名字；不是车模包抛错（错误信息给人看） */
+    /** 导入车模包（网页版"导出为 GLB"导出的 GLB）：要带配置，存进应用自己的目录。返回车模名字；不是车模包抛错（错误信息给人看） */
     /** 导入的进度：步骤、0～1 */
     interface Step { void at(String step, float f); }
     static String importPack(Context c, Uri uri, Step st) throws Exception {
@@ -278,7 +278,7 @@ final class CarModel {
         JSONObject cfg;
         try { cfg = configOf(bb); }
         catch (Exception e) { throw new IllegalArgumentException("车模包读不出来：文件可能没拷完整，或者坏了"); } // 截断的文件读到一半就越界
-        if (cfg == null) throw new IllegalArgumentException("这个 .glb 里没有车模配置：先在网页版（" + WEB + "）里导入、调整好，再「导出车模包」");
+        if (cfg == null) throw new IllegalArgumentException("这个 .glb 里没有车模配置：先在网页版（" + WEB + "）里导入、调整好，再「导出为 GLB」");
         st.at("保存", 0.14f);
         File tmp = new File(c.getFilesDir(), "model.tmp");
         try (FileOutputStream o = new FileOutputStream(tmp)) {
