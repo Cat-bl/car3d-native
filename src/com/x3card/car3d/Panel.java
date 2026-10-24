@@ -80,7 +80,9 @@ final class Panel extends Sheet {
         rs.setEnabled(!resetOff); rs.setAlpha(resetOff ? 0.35f : 1);
         acts.addView(rs);
         r.addView(acts);
-        r.addView(note("车模在网页版的「调整车模」里调好（车门、车窗、灯、车牌、贴纸都在那里调），点「导出车模包」得到一个 .glb，拷到车机上再在这里导入"));
+        r.addView(note("车模在网页版的「调整车模」里调好（车门、车窗、灯、车牌、贴纸都在那里调），点「导出车模包」得到一个 .glb，拷到车机上再在这里导入。"));
+        r.addView(note("网页版用电脑浏览器打开：" + CarModel.WEB));
+        r.addView(note("打不开时（GitHub 在国内有时连不上）：换个网络或过一会儿再试；也可以把网页版下载下来（github.com/Cat-bl/car3d-web 页面上的 Code → Download ZIP，或者找能打开的人要一份），解压后用电脑浏览器打开里面的 index.html，用法一样。"));
         group("外观");
         balls("paint", "车漆", tips[0]);
         r = row(true);

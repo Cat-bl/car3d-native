@@ -370,7 +370,7 @@ final class CarPage implements Stage.Page {
         importing = false;
         app.renderer.progress = null;
         Log.w("car3d", "导入：第一次画 " + (now() - impAt) + " 毫秒");
-        out.imported("车模包导入好了：" + impName);
+        out.imported("车模包导入好了：" + impName + (rec != null && rec.fmt > CarModel.FMT ? "。这个车模包是用更新的网页版做的，有些设置这个版本的应用还显示不了，请更新应用" : ""));
     }
     private void freeRoot(Obj3D r) {
         scene.remove(r);

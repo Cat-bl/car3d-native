@@ -199,7 +199,7 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     @Override public void modelUI(String name, String credit, boolean resetOff, String[] tips) { main.post(() -> panel.setModel(name, credit, resetOff, tips)); }
     @Override public void acSet(boolean on) { main.post(() -> act.acSet(on)); }
     @Override public void progress(String step, float f) { main.post(() -> busy.progress(step, f)); }
-    @Override public void imported(String msg) { main.post(() -> { busy.hide(); showToast(msg, 4000); }); }
+    @Override public void imported(String msg) { main.post(() -> { busy.hide(); showToast(msg, msg.length() > 40 ? 8000 : 4000); }); }
     /** 一打开就用对深浅色（不渐变） */
     void darkNow(boolean d) { hud.setDark(d, false, null); colors(); }
 

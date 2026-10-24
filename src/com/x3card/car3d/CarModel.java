@@ -203,7 +203,12 @@ final class CarModel {
 
     // ================= 现在用的车模 =================
     /** 一个车模：GLB（直接内存）、配置、名字、署名；builtin 是默认车模 W70，broken 是导入的读不出来、先用了默认的 */
-    static final class Rec { ByteBuffer buf; JSONObject cfg; String name = "", credit = ""; boolean builtin, broken; }
+    static final class Rec { ByteBuffer buf; JSONObject cfg; String name = "", credit = ""; boolean builtin, broken; int fmt = FMT; }
+    /** 车模包的格式版本（同网页版 carmodel.js 的 PACK_FMT，导出时写在 asset.extras.d3fmt，以前导出的没写当 1）：网页版的车模包里加了这里还显示不了的配置时那边加 1，
+     *  这里搬完再跟上；导入比这个新的包照样显示能显示的，提示更新应用 */
+    static final int FMT = 1;
+    /** 网页版（调整车模、导出车模包）的网址 */
+    static final String WEB = "cat-bl.github.io/car3d-web";
 
     static File file(Context c) { return new File(c.getFilesDir(), "model.glb"); }
     static Rec def(Context c) throws Exception {
@@ -223,8 +228,9 @@ final class CarModel {
                 try (FileInputStream in = new FileInputStream(f); FileChannel ch = in.getChannel()) {
                     r.buf = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size()).order(ByteOrder.LITTLE_ENDIAN);
                 }
-                JSONObject cfg = configOf(r.buf);
+                JSONObject x = extras(r.buf), cfg = x == null ? null : sanitize(x.opt("d3car"));
                 if (cfg == null) throw new IllegalStateException("车模包里没有配置");
+                r.fmt = x.optInt("d3fmt", 1);
                 r.cfg = cfg;
                 r.name = cfg.optString("name", "导入的车模"); r.credit = cfg.optString("credit", "");
                 return r;
@@ -235,9 +241,12 @@ final class CarModel {
     }
     /** GLB 里的车模配置（asset.extras.d3car），校验过；没有返回 null */
     static JSONObject configOf(ByteBuffer glb) throws Exception {
-        Gltf.Glb g = Gltf.read(glb);
-        JSONObject a = g.json.optJSONObject("asset"), x = a == null ? null : a.optJSONObject("extras");
+        JSONObject x = extras(glb);
         return x == null ? null : sanitize(x.opt("d3car"));
+    }
+    private static JSONObject extras(ByteBuffer glb) throws Exception {
+        JSONObject a = Gltf.read(glb).json.optJSONObject("asset");
+        return a == null ? null : a.optJSONObject("extras");
     }
     /** 导入车模包（网页版"导出车模包"的 GLB）：要带配置，存进应用自己的目录。返回车模名字；不是车模包抛错（错误信息给人看） */
     /** 导入的进度：步骤、0～1 */
@@ -269,7 +278,7 @@ final class CarModel {
         JSONObject cfg;
         try { cfg = configOf(bb); }
         catch (Exception e) { throw new IllegalArgumentException("车模包读不出来：文件可能没拷完整，或者坏了"); } // 截断的文件读到一半就越界
-        if (cfg == null) throw new IllegalArgumentException("这个 .glb 里没有车模配置：先在网页版里导入、调整好，再「导出车模包」");
+        if (cfg == null) throw new IllegalArgumentException("这个 .glb 里没有车模配置：先在网页版（" + WEB + "）里导入、调整好，再「导出车模包」");
         st.at("保存", 0.14f);
         File tmp = new File(c.getFilesDir(), "model.tmp");
         try (FileOutputStream o = new FileOutputStream(tmp)) {
