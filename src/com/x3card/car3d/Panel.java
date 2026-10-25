@@ -59,7 +59,7 @@ final class Panel extends Sheet {
         rows();
         scroll.post(() -> scroll.scrollTo(0, y));
     }
-    private long resetArm;
+    private long resetArm, achArm;
 
     // ================= 面板里的一行行 =================
     @Override protected void afterDrag() { refresh(""); }
@@ -144,6 +144,18 @@ final class Panel extends Sheet {
         r.addView(label("帧率", null, "转车、开门这些动的时候每秒画多少帧；静止时不画，和帧率、画质都没关系"));
         r.addView(seg("fps", Settings.FPS, new String[] { "30 帧", "60 帧（流畅）" }, 0));
         swRow("aa", "抗锯齿", "车和字的边缘更平滑，更费显卡；切换后画面重建一次");
+        group("成就");
+        r = row(true);
+        r.addView(label("成就墙", null, "按里程、行程、充电、去过的地方、车上的各种操作解锁勋章，没解锁的只显示“？？？”。总里程按车自己的累计数算，别的只在 3D 车况开着时记录"));
+        LinearLayout a6 = hbox();
+        a6.addView(actBtn("打开成就墙", true, () -> act.act("achOpen")));
+        boolean achArmed = System.currentTimeMillis() - achArm < 3000;
+        a6.addView(actBtn(achArmed ? "再点一次确认" : "清空成就记录", false, () -> { // 连点两下才清
+            if (System.currentTimeMillis() - achArm > 3000) { achArm = System.currentTimeMillis(); refresh(""); postDelayed(() -> refresh(""), 3100); return; }
+            achArm = 0;
+            act.act("achReset");
+        }));
+        r.addView(a6);
         if (dbgRow) {
             group("调试");
             r = row(true);

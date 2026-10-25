@@ -165,8 +165,8 @@ final class Hud extends View {
             p.setTypeface(Typeface.DEFAULT); p.setTextSize(r(0.2f)); p.setColor(mute);
             c.drawText("km/h", sx + sw + r(0.06f), bl, p);
         }
-        // 右边：系统图标、电源（右边留给齿轮、全屏键）
-        float right = W - r(portrait ? 0.3f : 0.4f) - r(fsOn && !portrait ? 1.32f : 0.62f);
+        // 右边：系统图标、电源（右边留给齿轮、全屏键、奖杯键）
+        float right = W - r(portrait ? 0.3f : 0.4f) - r(portrait ? 0.62f : fsOn ? 2.02f : 1.32f);
         p.setTypeface(ui500); p.setTextSize(r(0.2f));
         demoR.setEmpty();
         if (demo && !portrait) {

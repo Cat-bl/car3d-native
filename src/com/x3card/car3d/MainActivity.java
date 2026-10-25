@@ -11,9 +11,13 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
+import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+
+import com.x3card.car3d.ach.AchPage;
+import com.x3card.car3d.ach.Trophies;
 
 import org.json.JSONObject;
 
@@ -26,7 +30,8 @@ import java.util.Map;
  * 3D 车况原生版（照网页版 demo3d 的车况页，没有唱片机页）：3D 画布（SceneView + Stage + CarPage）+ 上面一层界面（CarUi：字、图标、胎压标签、齿轮、设置面板）
  * + 最上面的说明（InfoView：连不上宿主、没授权时）。
  * 宿主的数据（CarData）在主线程收，交给 GL 线程里的 CarPage；CarPage 交出来的界面变化由 CarUi 切回主线程。
- * 全屏同琉光原生版：自己在主屏上开一个全屏页（FullActivity，单独的任务），在全屏页里点"恢复小屏"关掉它；全屏页开着时小窗口里停画。设置两边共用，回到前台重新读
+ * 全屏同琉光原生版：自己在主屏上开一个全屏页（FullActivity，单独的任务），在全屏页里点"恢复小屏"关掉它；全屏页开着时小窗口里停画。设置两边共用，回到前台重新读。
+ * 成就（ach/）：看得见时记录（Trophies，自己订一组宿主数据）；新解锁的在右上角滑出提示（CarUi.achToast），奖杯键打开整页的成就墙（AchPage，盖在车上，开着时车况页停画）
  */
 public class MainActivity extends Activity implements Uiplus.Listener, CarData.Listener, CarUi.Actions {
     private static WeakReference<MainActivity> pip = new WeakReference<>(null);
@@ -43,6 +48,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     private InfoView info;
     private InfoPanel infoP;
     private DebugPanel dbgP;
+    private Trophies tro;
+    private AchPage achP;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final HandlerThread io = new HandlerThread("io");
     private Handler ioH;
@@ -64,6 +71,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         host = DebugHost.wanted(this) ? new DebugHost(this, this) : new Uiplus(this, this); // 不是车机：调试宿主（车况是模拟的，调试面板里改）
         data = new CarData(host, this);
         data.onActions = this::acOk;
+        tro = new Trophies(this, link(), host instanceof DebugHost);
         root = new FrameLayout(this);
         ui = new CarUi(this, S, this);
         info = new InfoView(this, w -> { if ("auth".equals(w)) authorize(); });
@@ -78,6 +86,15 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             ui.hud.setDemo(true);
             ui.panel.setDebug(true);
         }
+        achP = new AchPage(this);
+        root.addView(achP, new FrameLayout.LayoutParams(-1, -1));
+        ui.onTheme = (d, k) -> achP.setDark(d, k);
+        tro.listen(new Trophies.Listener() {
+            @Override public void unlocked(List<com.x3card.car3d.ach.Ach> g) { if (achP.isOpen()) achP.unlocked(g); else ui.achToast.show(g); }
+            @Override public void pending(int n) { ui.setBadge(n); }
+            @Override public void changed() { achP.changed(); }
+        });
+        ui.setBadge(tro.pendingCount());
         setContentView(root);
         ui.darkNow(page.isDark());
         ui.hud.setHint(page.hintShown());
@@ -129,6 +146,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         super.onDestroy();
     }
     @Override public void onBackPressed() {
+        if (achP.back()) return;
         if (ui.panelOpen()) ui.panel(false);
         else if (infoP.isOpen()) infoP.show(false);
         else if (dbgP != null && dbgP.isOpen()) dbgP.show(false);
@@ -137,9 +155,10 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
 
     /** 看得见 / 看不见：画布停画、车况退订（同网页版：页面藏起来取消订阅，回来重订） */
     private void wake(boolean on) {
-        if (on) { view.onResume(); view.queueEvent(() -> stage.setVisible(true)); }
-        else { view.queueEvent(() -> stage.setVisible(false)); view.onPause(); }
+        if (on) { view.onResume(); view.queueEvent(() -> stage.setVisible(true)); ui.setBadge(tro.pendingCount()); }
+        else { achP.closeNow(); view.queueEvent(() -> stage.setVisible(false)); view.onPause(); }
         wants(on);
+        tro.setVisible(on);
     }
     private void wants() { wants(started && !slept); }
     private void wants(boolean on) {
@@ -218,6 +237,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
                 break;
             case "bgImage": pick(PICK_BG, "image/*"); break;
             case "debug": debug(); break;
+            case "achOpen": trophies(); break;
+            case "achReset": tro.reset(); ui.toast("成就记录清空了", 2600); break;
             case "bgUse": if (Background.has(this)) S.set("bg", "image"); else pick(PICK_BG, "image/*"); break; // 没存过图片：先选一张
             default: view.queueEvent(() -> p.setting("act:" + name));
         }
@@ -297,6 +318,35 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         final CarPage p = page;
         view.queueEvent(() -> p.aside(false));
     }
+    /** 成就墙（奖杯键、弹出的提示、设置里那一行）：设置、全部车况这些先关掉；字和键淡出、车况页停画，关上以后恢复 */
+    @Override public void trophies() {
+        if (achP.isOpen() || !started || slept) return;
+        if (ui.panelOpen()) ui.panel(false);
+        if (infoP.isOpen()) infoP.show(false);
+        if (dbgP != null && dbgP.isOpen()) dbgP.show(false);
+        ui.achToast.clear();
+        String b = S.str("bg");
+        achP.setDark(ui.darkTo(), ui.hud.darkK());
+        achP.setAccent(accent());
+        achP.setBg("warm".equals(b) ? 1 : "cool".equals(b) ? 2 : "image".equals(b) ? 3 : 0, S.num("bgDim"), () -> Background.load(this));
+        achP.open(tro, S.bool("aa"), "30".equals(S.str("fps")) ? 30 : 60, () -> {
+            ui.animate().cancel();
+            ui.setVisibility(View.VISIBLE);
+            ui.animate().alpha(1).setDuration(250).start();
+            final Stage st = stage;
+            final boolean vis = started && !slept;
+            view.queueEvent(() -> st.setVisible(vis));
+        });
+        ui.animate().alpha(0).setDuration(200).withEndAction(() -> { if (achP.isOpen()) ui.setVisibility(View.INVISIBLE); }).start();
+        final Stage st = stage;
+        view.queueEvent(() -> st.setVisible(false));
+    }
+    /** 强调色（同设置面板：跟着车漆） */
+    private int accent() {
+        String a = S.pick("paint").acc;
+        try { if (a != null) return android.graphics.Color.parseColor(a); } catch (Exception ignored) { }
+        return 0xffff4b55;
+    }
     @Override public void roofTap() { final CarPage p = page; view.queueEvent(p::roofTap); }
     @Override public void tagMax(float y) { final CarPage p = page; view.queueEvent(() -> p.setTagMax(y)); }
     @Override public void panel(boolean open) { final CarPage p = page; view.queueEvent(() -> p.focus(open)); }
@@ -342,13 +392,25 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         info.setPerms(host.canRead(), host.ready());
         ui.setBlocked(info.covering());
         data.hostChanged();
+        tro.hostChanged();
     }
     @Override public void onPermissions(boolean read, boolean exec) {
         info.setPerms(read, host.ready());
         ui.setBlocked(info.covering());
         data.hostChanged();
+        tro.hostChanged();
     }
-    @Override public void onEvent(JSONObject m) { if (!infoP.onEvent(m)) data.onEvent(m); }
+    @Override public void onEvent(JSONObject m) { if (!tro.onEvent(m) && !infoP.onEvent(m)) data.onEvent(m); }
+    /** 成就用的宿主（同 Host） */
+    private Trophies.Link link() {
+        return new Trophies.Link() {
+            @Override public void request(String m, JSONObject p, Uiplus.Reply r) { host.request(m, p, r); }
+            @Override public String session() { return host.session(); }
+            @Override public boolean ready() { return host.ready(); }
+            @Override public boolean canRead() { return host.canRead(); }
+            @Override public boolean backendReady() { return host.backendReady(); }
+        };
+    }
     void authorize() {
         try {
             host.authorize(new JSONObject().put("readData", true).put("executeActions", true), (r, code, msg) -> { if (code != null) ui.toast("授权没成：" + msg, 3500); });

@@ -2,8 +2,8 @@
 <!-- 3D 车况（原生版）：车机 Android 10，宿主（com.wzw.bydmodule）的多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.x3card.car3d"
-    android:versionCode="2"
-    android:versionName="0.2">
+    android:versionCode="3"
+    android:versionName="0.3">
 
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
