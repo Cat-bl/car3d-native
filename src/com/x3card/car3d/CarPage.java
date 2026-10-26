@@ -386,7 +386,7 @@ final class CarPage implements Stage.Page {
     }
     private void dropModel() {
         if (root != null) freeRoot(root);
-        root = modelObj = null; Mt = null; parts = null; wheels = null; LS = null; plates = null;
+        root = modelObj = null; Mt = null; parts = null; wheels = null; LS = null; plates = null; chg = null;
         wheelN = 0;
     }
     @Override public void unload() {
@@ -403,7 +403,7 @@ final class CarPage implements Stage.Page {
         if (keyLight != null) keyLight.disposeShadow();
         envRoom = null; std = false;
         app.renderer.toneMapping = Programs.ACES;
-        scene = null; camera = null; root = null; Mt = null; parts = null; wheels = null; modelObj = null; LS = null; plates = null; pdrag = null;
+        scene = null; camera = null; root = null; Mt = null; parts = null; wheels = null; modelObj = null; LS = null; plates = null; pdrag = null; chg = null; camK = 0; chgOn = chgOff = false;
         wheelN = 0; rec = null;
         topOn = false; topK = 0; showK = angK = 0; finishK = 1; preview = false;
         out.loading(null);
@@ -710,6 +710,10 @@ final class CarPage implements Stage.Page {
             root.add(catcher);
             shadowDirty = true;
         }
+        // ---- 充电桩、充电枪、地上的光环（插着枪才显示） ----
+        V3[] spot = chargeSpot(pc);
+        chg = new Charger(app, spot[0], spot[1], dimsHw, dimsHl, dimsH, REFL * envK, fx.shadow > 0);
+        root.add(chg.root);
         if (M.origMap != null) root.put("origMap", M.origMap);
         if (fx.reflect) { mirror = new Mirror(dimsHl, dimsHw, app.bufW(), app.bufH(), app.aa); root.add(mirror.mesh); root.put("refl", mirror); }
         LS = new Lamps(ents);
@@ -1616,6 +1620,10 @@ final class CarPage implements Stage.Page {
         for (Map.Entry<String, String> e : SLIDES.entrySet()) { Object w = c.get(e.getValue()); want.put(e.getKey(), w instanceof Number ? Math.max(0, Math.min(1, ((Number) w).floatValue() / 100)) : 0f); }
         Object con = c.get(FLAPS.get("chargePort"));
         want.put("chargePort", con != null && !"none".equals(con) ? 1f : 0f);
+        boolean plugged = "ac".equals(con) || "dc".equals(con) || "acDc".equals(con), charging = "charging".equals(c.get("energy.chargingState"));
+        Double bat = nm(c.get("energy.batteryPercent"));
+        if (chg != null) chg.set(plugged || charging, charging, bat);
+        String chgKey = (plugged || charging) + "" + charging + (bat == null ? "" : Math.round(bat));
         boolean low = Boolean.TRUE.equals(c.get("light.lowBeam")), high = Boolean.TRUE.equals(c.get("light.highBeam")), lit = low || high, side = Boolean.TRUE.equals(c.get("light.side"));
         Object pw = c.get("power.level"), ab = c.get("light.ambient.brightness"), drl = c.get("light.daytimeRunning");
         boolean on = "on".equals(pw) || "ready".equals(pw) || "fakeReady".equals(pw), powered = pw == null || on;
@@ -1654,7 +1662,7 @@ final class CarPage implements Stage.Page {
             ring.material.color.setHex(bad == 2 ? 0xff3b30 : 0xff9a1f);
             ring.material.opacity = bad > 0 ? 0.9f : 0;
         }
-        String k3 = want + "|" + lightOn + "|" + brakeFlash + ambientHex + ambArea + colorful + musicOn + turnHz + bulb + pulsed + tyreBad;
+        String k3 = want + "|" + lightOn + "|" + brakeFlash + ambientHex + ambArea + colorful + musicOn + turnHz + bulb + pulsed + tyreBad + chgKey;
         if (!k3.equals(applyKey) || root != applyRoot || welT == 0) { applyKey = k3; applyRoot = root; app.invalidate(); }
     }
     /** 车况页要不要媒体订阅变了（音乐律动开关）：由 MainActivity 接 */
@@ -1973,6 +1981,18 @@ final class CarPage implements Stage.Page {
             if (!cur.containsKey(k) || a != cur.get(k)) shadowDirty = true;
             cur.put(k, a);
         }
+        boolean chgAnim = false;
+        if (chg != null) {
+            int ca = chg.tick(dt, themeK);
+            if (ca == 2) { moving = true; shadowDirty = true; } else if (ca == 1) chgAnim = true;
+            if (chg.wanted() != chgOn) { // 插上枪：镜头转到看充电桩的角度；拔掉：转回来（手指转过车就不管）
+                boolean was = chgNow();
+                chgOn = chg.wanted(); chgOff = false;
+                if (chgOn || was) { vHoming = true; vVaz = 0; }
+            }
+            float cw = chg.wanted() ? 1 : 0; // 镜头往外拉一点、挪一点，把充电桩和光环也装进来
+            if (Math.abs(camK - cw) > 0.002f) { camK += (cw - camK) * (1 - (float) Math.exp(-dt * 2.4)); moving = true; } else camK = cw;
+        }
         if (shadowDirty && keyLight.castShadow) { app.renderer.shadowNeedsUpdate = true; shadowDirty = false; }
         for (Map.Entry<String, Part> e : parts.entrySet()) {
             Part p = e.getValue();
@@ -2032,7 +2052,7 @@ final class CarPage implements Stage.Page {
         place();
         if (moving || lightAnim) movedAt = now();
         still = !moving && mirror == null; // 开着地面反射时不用（反射里的灯也要跟着变）
-        return moving ? 60 : lightAnim ? 30 : blinking ? 8 : 0;
+        return moving ? 60 : lightAnim || chgAnim ? 30 : blinking ? 8 : 0;
     }
     /** CSS 的 ease（cubic-bezier(.25, .1, .25, 1)） */
     private static float cssEase(float x) {
@@ -2115,6 +2135,7 @@ final class CarPage implements Stage.Page {
     }
     private void stopLook() {
         plateV = null;
+        if (chgOn) chgOff = true;
         if (tour != null || pin != null) { tour = null; pin = null; app.cancel(tourTimer); }
         tyreOff = true;
         if (doorV != null || doorDue != 0) { doorV = null; doorDue = doorEnd = 0; }
@@ -2225,7 +2246,7 @@ final class CarPage implements Stage.Page {
         if (pin != null && pin.v != null) return pin.v.view;
         if (tour != null) return tour.view;
         if (topNow() || preview && previewTop) return TOP;
-        return doorNow() ? doorV.view : HOME;
+        return doorNow() ? doorV.view : chgNow() ? chgV : HOME;
     }
     private static float ease(float t) { return t < 0.5f ? 2 * t * t : 1 - (float) Math.pow(-2 * t + 2, 2) / 2; }
     private static float easeOut(float t) { return 1 - (float) Math.pow(1 - t, 3); }
@@ -2238,6 +2259,7 @@ final class CarPage implements Stage.Page {
         if (sk > 0) { az += wrap(SHOW[0] - az) * ak; el += (SHOW[1] - el) * ak; d *= 1 + (portrait ? 0.3f : 0.42f) * sk; }
         float ty = dimsH * (0.357f - 0.157f * qk), ce = (float) Math.cos(el);
         aim.set(0, ty, 0);
+        if (camK > 0) { float ck = ease(camK) * (1 - qk); aim.x += chgAim.x * ck; aim.z += chgAim.z * ck; d *= 1 + (chgDk - 1) * ck; }
         if (focusK > 0 && focusAt != null) { float fk = ease(focusK); aim.lerp(focusAt, fk * focusL); d *= 1 - focusZ * fk; }
         if (camera.fov != fov) camera.fov = fov;
         if (Mt != null && Mt.fb != 0) { float px = 0.00625f * H / (2 * d * (float) Math.tan(fov * Math.PI / 360)); Mt.flake.v = Mt.fb * Math.max(0, Math.min(1, (px - 1.5f) / 1.5f)); }
@@ -2323,6 +2345,95 @@ final class CarPage implements Stage.Page {
         out.roof(acOk, ok, x, y, roofOn, roofWant != null);
     }
 
+    // ================= 充电桩（Charger 画；插着枪才显示） =================
+    private Charger chg;
+    /** 镜头装下充电桩、光环的程度（0～1）、那时镜头远多少倍、看的点往哪挪 */
+    private float camK, chgDk = 1;
+    private final V3 chgAim = new V3();
+    /** 插着枪（chgOn）时镜头看充电桩的角度（chgV）；手指转过车（chgOff）就不再跟着，直到下次插枪 */
+    private boolean chgOn, chgOff;
+    private final float[] chgV = { -0.72f, 0.2f };
+    private boolean chgNow() { return chgOn && !chgOff && chg != null && !topOn && !preview && pkey == null; }
+    /**
+     * 充电枪插在哪（车身表面上的点、那里朝外的方向）：绑定了充电盖的，插在盖子后面的车身上（盖子最薄的方向当朝外，从外面朝里打射线找车身）；
+     * 没绑定的，从车右边横着往里打射线，找右后轮上方的车身表面（后翼子板），打到车窗、太靠里、朝向不对的往下挪着再找
+     */
+    private V3[] chargeSpot(JSONObject pc) {
+        List<Object[]> keep = restPose(); // 门、盖正开着也按关着的样子找
+        try {
+            Map<Mesh, Boolean> skip = new IdentityHashMap<>();
+            for (Mesh m : mrefs(pc.opt("wheels"))) skip.put(m, true);
+            Part lid = parts.get("chargePort");
+            if (lid != null) {
+                Box3 b = new Box3();
+                for (Mesh m : lid.meshes) { b.expandByObject(m); skip.put(m, true); }
+                V3 c = b.getCenter(new V3()), s = b.getSize(new V3()), n;
+                if (s.x <= s.y && s.x <= s.z) n = V(c.x >= 0 ? 1 : -1, 0, 0);
+                else if (s.z <= s.y) n = V(0, 0, c.z >= 0 ? 1 : -1);
+                else n = V(0, 1, 0);
+                V3 o = c.clone().addScaled(n, 0.5f);
+                Box3 strip = new Box3().expandByPoint(o).expandByPoint(c.clone().addScaled(n, -0.35f));
+                strip.min.addScaled(V(1, 1, 1), -0.02f); strip.max.addScaled(V(1, 1, 1), 0.02f);
+                Ray.Hit h = castCar(carTris(strip, skip), o, n.clone().negate(), 0.85f);
+                if (h != null) return new V3[] { h.point.clone(), outward(h.normal, n) };
+                return new V3[] { c.addScaled(n, -0.015f), n };
+            }
+            V3 wc = wheels.get("rearRight").c;
+            float z = wc.z - wheelR * 0.25f, top = 2 * wheelR, y0 = top + (dimsH - top) * 0.32f;
+            Box3 strip = new Box3(V(-dimsHw - 1.05f, top, z - 0.3f), V(0.05f, y0 + 0.02f, z + 0.3f));
+            List<Object[]> tl = carTris(strip, skip);
+            for (float lim : new float[] { -0.75f, -0.45f }) // 先找差不多竖着的车身侧面，找不到再放宽（跑车后翼子板鼓得厉害）
+                for (float dz : new float[] { 0, -0.12f, 0.12f, -0.24f, 0.24f }) for (float y = y0; y >= top + 0.04f; y -= 0.03f) {
+                    Ray.Hit h = castCar(tl, V(-dimsHw - 1, y, z + dz), V(1, 0, 0), dimsHw + 1);
+                    if (h == null) continue;
+                    V3 n = outward(h.normal, V(-1, 0, 0));
+                    if (n.x < lim && h.point.x < -0.5f * dimsHw) return new V3[] { h.point.clone(), n };
+                }
+            return new V3[] { V(-dimsHw, y0, z), V(-1, 0, 0) }; // 一处都没找到（模型很怪）：按外框兜底
+        } finally { restore(keep); }
+    }
+    private static V3 outward(V3 n, V3 want) { V3 r = n.clone().normalize(); return r.dot(want) < 0 ? r.negate() : r; }
+    /** 车上看得见、挡得住射线的零件在 strip 里的三角形（车轮、玻璃这类透明的、skip 里的不算） */
+    private List<Object[]> carTris(Box3 strip, Map<Mesh, Boolean> skip) {
+        List<Object[]> l = new ArrayList<>();
+        root.updateMatrixWorld(true);
+        for (Mesh m : d3.meshes) {
+            if (m.parent == null || !inScene(m) || m.geometry == null || m.material == null || skip.containsKey(m)) continue;
+            if (m.material.transparent && m.material.opacity < 0.9f) continue;
+            if (!m.geometry.boundingBox().clone().applyMatrix4(m.matrixWorld).intersectsBox(strip)) continue;
+            int[] t = Ray.trisIn(m, strip);
+            if (t.length > 0) l.add(new Object[] { m, t });
+        }
+        return l;
+    }
+    private Ray.Hit castCar(List<Object[]> l, V3 o, V3 d, float far) {
+        ray.set(o, d);
+        Ray.Hit best = null;
+        for (Object[] x : l) {
+            int[] t = (int[]) x[1];
+            Ray.Hit h = ray.intersectMesh((Mesh) x[0], t, t.length);
+            if (h != null && h.dist <= far && (best == null || h.dist < best.dist)) best = h;
+        }
+        return best;
+    }
+    /** 装下车、充电桩、光环时镜头远多少倍（相对只装车），看的点挪到它们合起来的外框中间（只挪水平方向） */
+    private void chgFit(List<V3> corners, float aw, float ah) {
+        chgDk = 1; chgAim.set(0, 0, 0);
+        if (chg == null) return;
+        chgV[0] = chg.viewAz(Math.max(0.35f, Math.min(1.2f, Math.abs(wrap(HOME[0]))))); chgV[1] = HOME[1];
+        List<V3> all = new ArrayList<>(corners);
+        all.addAll(chg.points());
+        float x0 = Float.POSITIVE_INFINITY, x1 = Float.NEGATIVE_INFINITY, z0 = x0, z1 = x1;
+        for (V3 q : all) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); z0 = Math.min(z0, q.z); z1 = Math.max(z1, q.z); }
+        chgAim.set((x0 + x1) / 2, 0, (z0 + z1) / 2);
+        float d0 = vDist, t0 = topDist, k0 = camK;
+        camK = 1;
+        chg.ringAt(chgV[0]);
+        float dc = fit(chgV, 0, all, aw * 0.88f, ah) / S.num("viewZoom"); // 左右多留点地方：充电桩别压到两边的车况图标
+        camK = k0; vDist = d0; topDist = t0;
+        chgDk = dc / vDist;
+    }
+
     // ================= 尺寸 =================
     @Override public void resize(float w, float h, boolean p) {
         boolean ch = portrait != p || W != w || H != h;
@@ -2342,6 +2453,7 @@ final class CarPage implements Stage.Page {
         List<V3> all = new ArrayList<>(corners); all.addAll(tags);
         float dTop = fit(TOP, 1, all, p ? 0.9f : 0.8f, ah) / S.num("dZoom");
         vDist = fit(HOME, 0, corners, p ? 0.94f : 0.86f, ah) / S.num("viewZoom");
+        chgFit(corners, p ? 0.94f : 0.86f, ah);
         topDist = dTop;
         introT = it0; showK = sk0; angK = ak0; topK = qk0; vAz = az; vEl = el0;
         fitA = new float[] { ah, p ? 0.94f : 0.86f, 1 - 2 * cy / h };

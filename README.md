@@ -10,6 +10,7 @@
 - 车灯：近光、远光（地上照出光束）、日行灯、示宽灯、尾灯、刹车灯（紧急制动时快闪）、倒车灯、转向灯和双闪、前后雾灯、氛围灯（颜色、亮度跟着车机，支持音乐律动、动态多彩）。上车时迎宾灯亮一下。
 - 四个轮子旁边是胎压标签（胎压、胎温）。胎压异常时镜头拉近对着那个轮子。
 - 挂 D 挡时镜头转到车顶视角，四个轮子的胎压都在画面里。这个角度可以在设置里改。
+- 插上充电枪时，车旁边长出一根充电桩，线缆接到插在充电口上的枪，地上一圈光环围着车，亮的那一段就是电量；充电时光沿线缆流进车里。镜头会转到充电口那一侧看过去。枪插在车模里标好的充电口盖上；没标的车模插在右后轮上方。
 
 ## 车况信息
 
@@ -113,6 +114,7 @@ node build.mjs --install  # 打完用 adb install -r 装上（adb 要在 PATH �
 | `CarPage.java` | 建车、车况怎么动、灯、镜头、手势 |
 | `CarModel.java` / `GeoCache.java` / `Settings.java` | 车模存取、配置校验、默认车模的内置配置；解好的几何缓存；设置存取 |
 | `Lamp.java` / `Plates.java` / `WrapArt.java` / `WrapCut.java` / `Wraps.java` | 车灯的点亮层和路面光束、车牌（画牌面、自己改的存取）、贴纸 |
+| `Charger.java` | 充电时的充电桩、充电枪、线缆和按电量画的光环 |
 | `PlatePanel.java` / `PlateRule.java` | 车牌面板（牌种、敲号、位置）；车牌号的国标规则 |
 | `Stage.java` / `Mirror.java` / `Post.java` / `SceneView.java` / `Bg.java` / `Background.java` | 出帧和省电、地面反射、辉光和环境光遮蔽、画布、背景渐变、背景图片 |
 | `Hud.java` / `Tags.java` / `CarUi.java` / `Sheet.java` / `Panel.java` / `InfoPanel.java` / `Busy.java` / `SvgPath.java` | 界面：顶栏和文字、胎压标签、按钮和提示、设置面板、全部车况、导入进度、图标路径 |
