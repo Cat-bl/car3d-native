@@ -40,6 +40,7 @@ final class Panel extends Sheet {
     private String modelName = "", modelCredit = "";
     private boolean resetOff = true;
     private String[] tips = { "", "", "" };
+    private String plateState = "";
 
     Panel(Context c, Settings s, Act act) {
         super(c, s, "设置", true);
@@ -51,6 +52,8 @@ final class Panel extends Sheet {
     void setDebug(boolean on) { dbgRow = on; if (open) rows(); }
     private boolean dbgRow;
     void setModel(String name, String credit, boolean off, String[] t) { modelName = name; modelCredit = credit; resetOff = off; tips = t; if (open) rows(); }
+    /** 车牌那一行的状态（"后 · 粤B·12345"、"没挂"） */
+    void setPlates(String s) { if (s.equals(plateState)) return; plateState = s; refresh(""); }
     /** 设置在别处改了：面板开着就重画（保持滚动位置）。拖滑块改的（视角、压暗、自定义颜色）不重画（正拖着的滑块会被换掉），只让各处按新值重画一遍 */
     void refresh(String k) {
         if (!open) return;
@@ -80,9 +83,14 @@ final class Panel extends Sheet {
         rs.setEnabled(!resetOff); rs.setAlpha(resetOff ? 0.35f : 1);
         acts.addView(rs);
         r.addView(acts);
-        r.addView(note("车模在网页版的「调整车模」里调好（车门、车窗、灯、车牌、贴纸都在那里调），点「导出为 GLB」得到一个 .glb 文件，拷到车机上再在这里导入。"));
+        r.addView(note("车模在网页版的「调整车模」里调好（车门、车窗、灯、贴纸都在那里调），点「导出为 GLB」得到一个 .glb 文件，拷到车机上再在这里导入。"));
         r.addView(note("网页版用电脑浏览器打开：" + CarModel.WEB));
         r.addView(note("打不开时（GitHub 在国内有时连不上）：换个网络或过一会儿再试；也可以把网页版下载下来（github.com/Cat-bl/car3d-web 页面上的 Code → Download ZIP，或者找能打开的人要一份），解压后用电脑浏览器打开里面的 index.html，用法一样。"));
+        r = row(true);
+        r.addView(label("车牌", plateState, "装饰，跟车况不联动。车牌号、牌种换了车模照样用；位置按车模分开记，车模包里摆好的先用上"));
+        LinearLayout ap = hbox();
+        ap.addView(actBtn("调整车牌", false, () -> act.act("plates")));
+        r.addView(ap);
         group("外观");
         balls("paint", "车漆", tips[0]);
         r = row(true);
@@ -289,32 +297,5 @@ final class Panel extends Sheet {
         lp.topMargin = px(0.1f);
         box.setLayoutParams(lp);
         return box;
-    }
-    /** 自动换行的一排（标签、分组名；分组名独占一行） */
-    private final class Flow extends ViewGroup {
-        Flow(Context c) { super(c); }
-        @Override protected void onMeasure(int ws, int hs) {
-            int w = MeasureSpec.getSize(ws), x = 0, y = 0, lh = 0, gap = px(0.08f);
-            for (int i = 0; i < getChildCount(); i++) {
-                View v = getChildAt(i);
-                v.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.AT_MOST), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-                boolean br = "break".equals(v.getTag());
-                if (br || x + v.getMeasuredWidth() > w) { if (x > 0) { y += lh + gap; x = 0; lh = 0; } }
-                x += v.getMeasuredWidth() + gap; lh = Math.max(lh, v.getMeasuredHeight());
-                if (br) { y += lh + gap / 2; x = 0; lh = 0; }
-            }
-            setMeasuredDimension(w, y + lh);
-        }
-        @Override protected void onLayout(boolean ch, int l, int t, int r, int b) {
-            int w = r - l, x = 0, y = 0, lh = 0, gap = px(0.08f);
-            for (int i = 0; i < getChildCount(); i++) {
-                View v = getChildAt(i);
-                boolean br = "break".equals(v.getTag());
-                if (br || x + v.getMeasuredWidth() > w) { if (x > 0) { y += lh + gap; x = 0; lh = 0; } }
-                v.layout(x, y, x + v.getMeasuredWidth(), y + v.getMeasuredHeight());
-                x += v.getMeasuredWidth() + gap; lh = Math.max(lh, v.getMeasuredHeight());
-                if (br) { y += lh + gap / 2; x = 0; lh = 0; }
-            }
-        }
     }
 }

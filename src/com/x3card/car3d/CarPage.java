@@ -292,6 +292,10 @@ final class CarPage implements Stage.Page {
         CarModel.ids(model);
         cfg = c != null ? c : rec.cfg != null ? rec.cfg : CarModel.w70();
         if (rec.cfg == null && !CarModel.isW70(model)) throw new IllegalStateException("车模没有配置");
+        packPlates = cfg.optJSONObject("plates");
+        plateKey = Plates.modelKey(ctx, rec);
+        JSONObject mp = Plates.merge(packPlates, Plates.load(ctx), plateKey);
+        if (mp != null) cfg.put("plates", mp);
         if (pr != null) step("建车", 0.37f);
         build(model, cfg);
         prefetchTex(root);
@@ -306,6 +310,7 @@ final class CarPage implements Stage.Page {
         warmLamps(g);
         apply(carNow);
         modelUI();
+        reportPlates();
         if (W > 1) resize(W, H, portrait);
     }
     /** 车上看得见的零件用到的贴图交给后台线程先解码（画第一帧时就不用一张张在画图线程上解了） */
@@ -381,7 +386,7 @@ final class CarPage implements Stage.Page {
     }
     private void dropModel() {
         if (root != null) freeRoot(root);
-        root = modelObj = null; Mt = null; parts = null; wheels = null; LS = null;
+        root = modelObj = null; Mt = null; parts = null; wheels = null; LS = null; plates = null;
         wheelN = 0;
     }
     @Override public void unload() {
@@ -398,7 +403,7 @@ final class CarPage implements Stage.Page {
         if (keyLight != null) keyLight.disposeShadow();
         envRoom = null; std = false;
         app.renderer.toneMapping = Programs.ACES;
-        scene = null; camera = null; root = null; Mt = null; parts = null; wheels = null; modelObj = null; LS = null;
+        scene = null; camera = null; root = null; Mt = null; parts = null; wheels = null; modelObj = null; LS = null; plates = null; pdrag = null;
         wheelN = 0; rec = null;
         topOn = false; topK = 0; showK = angK = 0; finishK = 1; preview = false;
         out.loading(null);
@@ -762,38 +767,129 @@ final class CarPage implements Stage.Page {
         return l;
     }
 
-    // ================= 车牌（Plates 画，这里摆位置；装饰，跟车况不联动） =================
+    // ================= 车牌（Plates 画，这里摆位置；装饰，跟车况不联动）。设置里的"调整车牌"开着时能按住车上的车牌拖 =================
     private Map<String, Obj3D> plates;
+    /** 车模包自己的车牌配置（盖上自己改的之前）、这台车在存储里的名字 */
+    private JSONObject packPlates;
+    private String plateKey = "w70";
+    /** 交给界面（GL 线程里调，回调里自己切到主线程）：建好车时合并后的车牌配置和车的尺寸（半宽、高、半长）、自动摆的 / 拖完的位置 */
+    interface PlateOut { void plates(JSONObject st, float[] dims, String key); void plateAt(String which, JSONArray at, boolean drag); }
+    PlateOut plateOut;
+    /** 这次自动摆了位置的几块（要交回界面存起来） */
+    private final List<String> autoAt = new ArrayList<>();
     private static boolean inScene(Obj3D o) { for (Obj3D p = o; p != null; p = p.parent) if (!p.visible) return false; return true; }
     /** 按配置建两块车牌（只建开着的），位置落在哪个会动的部件里就跟着它动 */
     private void plates(JSONObject st) {
         plates = new HashMap<>();
-        for (String k : new String[] { "front", "rear" }) {
-            JSONObject p = st.optJSONObject(k);
-            if (p == null || !p.optBoolean("on")) continue;
-            Obj3D m;
-            try { m = Plates.mesh(ctx, st, "rear".equals(k)); } catch (Exception e) { Log.w("car3d", "车牌画不出来", e); continue; }
-            m.put("which", k);
-            plates.put(k, m);
-            plateXform(m, p);
-            root.add(m);
-            plateAttach(m);
-        }
+        for (String k : Plates.SIDES) plateOne(st, k);
     }
+    private void plateOne(JSONObject st, String k) {
+        JSONObject p = st.optJSONObject(k);
+        if (p == null || !p.optBoolean("on")) return;
+        Obj3D m;
+        try { m = Plates.mesh(ctx, st, "rear".equals(k)); } catch (Exception e) { Log.w("car3d", "车牌画不出来", e); return; }
+        m.put("which", k);
+        plates.put(k, m);
+        plateXform(m, p);
+        root.add(m);
+        plateAttach(m);
+    }
+    private void plateFree(Obj3D m) { m.removeFromParent(); app.dispose(m); }
+    /** 车牌配置变了（设置里改的）：只换车牌，不重建车。只动了位置、角度的直接挪；牌种、号、宽度、开关变了的那块重建 */
+    void setPlates(JSONObject st) {
+        if (root == null || cfg == null || st == null) return;
+        if (plates == null) plates = new HashMap<>();
+        JSONObject old = cfg.optJSONObject("plates");
+        try { cfg.put("plates", st); } catch (Exception ignored) { }
+        for (String k : Plates.SIDES) {
+            JSONObject p = st.optJSONObject(k);
+            Obj3D m = plates.get(k);
+            if (p == null || !p.optBoolean("on")) { if (m != null) { plateFree(m); plates.remove(k); } continue; }
+            if (m != null && sameFace(old, st, k)) { platePlace(m, p); continue; }
+            if (m != null) { plateFree(m); plates.remove(k); }
+            plateOne(st, k);
+        }
+        app.invalidate();
+        reportAuto();
+    }
+    /** 牌面、板子一样（牌种、号、颜色、宽度都没变），只是位置、角度变了 */
+    private static boolean sameFace(JSONObject a, JSONObject b, String k) {
+        if (a == null) return false;
+        for (String f : new String[] { "style", "text", "bg", "fg" }) if (!a.optString(f).equals(b.optString(f))) return false;
+        JSONObject x = a.optJSONObject(k), y = b.optJSONObject(k);
+        return x != null && y != null && x.optBoolean("on") && x.optDouble("w", -1) == y.optDouble("w", -1);
+    }
+    /** 回到车底下重新摆，再看挂在哪个部件上 */
+    private void platePlace(Obj3D m, JSONObject p) {
+        root.attach(m);
+        plateXform(m, p);
+        plateAttach(m);
+    }
+    /** 回到前台：另一个界面（全屏页 / 小窗口）可能改过存着的车牌 */
+    void platesFromStore() {
+        if (root == null || cfg == null) return;
+        JSONObject m = Plates.merge(packPlates, Plates.load(ctx), plateKey);
+        JSONObject a = CarModel.cleanPlates(m), b = CarModel.cleanPlates(cfg.optJSONObject("plates")); // 整理成同样的写法再比（键的先后不算变了）
+        if (m == null || a != null && b != null && a.toString().equals(b.toString())) return;
+        setPlates(m);
+        reportPlates();
+    }
+    private void reportPlates() {
+        autoAt.clear();
+        final PlateOut po = plateOut;
+        JSONObject st = cfg != null ? cfg.optJSONObject("plates") : null;
+        if (po == null || st == null) return;
+        final String sj = st.toString(), key = plateKey;
+        final float[] d = { dimsHw, dimsH, dimsHl };
+        app.ui(() -> { try { po.plates(new JSONObject(sj), d, key); } catch (Exception ignored) { } });
+    }
+    private void reportAuto() {
+        final PlateOut po = plateOut;
+        JSONObject st = cfg.optJSONObject("plates");
+        for (String k : autoAt) {
+            JSONObject p = st != null ? st.optJSONObject(k) : null;
+            JSONArray at = p != null ? p.optJSONArray("at") : null;
+            if (po == null || at == null) continue;
+            final String kk = k, aj = at.toString();
+            app.ui(() -> { try { po.plateAt(kk, new JSONArray(aj), false); } catch (Exception ignored) { } });
+        }
+        autoAt.clear();
+    }
+    private static double r3(float v) { return Math.round(v * 1000) / 1000.0; }
     /** 自动摆一个起点（同 plateAuto）：从车外朝车里横着打射线，从低往高扫，找第一个"挂得住"的高度——
         打到的面得朝着车头 / 车尾、而且离那一头够远；横向居中、贴着那个面放 */
     private float[] plateAuto(String which) {
+        List<Object[]> keep = parts != null ? restPose() : null; // 尾门、引擎盖正开着（或者还在关）：按关着的样子找
+        try { return plateAuto0(which); } finally { if (keep != null) restore(keep); }
+    }
+    private float[] plateAuto0(String which) {
         int want = "front".equals(which) ? 1 : -1;
         List<Mesh> list = new ArrayList<>();
         root.updateMatrixWorld(true);
-        for (Mesh m : d3.meshes) if (m.parent != null && inScene(m)) list.add(m);
+        for (Mesh m : d3.meshes) if (m.parent != null && inScene(m) && m.geometry != null) list.add(m);
+        // 射线都是沿车长方向打的，只扫车中间一条窄带：横向、高度不在零件外框里的直接跳过；
+        // 剩下的零件先把窄带里的三角形挑一遍，40 条射线只看这些（结果一样，大车模上少算很多三角形）
+        float far = dimsHl * 1.5f + 1;
+        Box3 strip = new Box3(V(-0.16, dimsH * 0.12, -far), V(0.16, dimsH * 0.47, far));
+        Box3[] wb = new Box3[list.size()];
+        int[][] tris = new int[list.size()][];
+        for (int j = 0; j < wb.length; j++) {
+            wb[j] = list.get(j).geometry.boundingBox().clone().applyMatrix4(list.get(j).matrixWorld);
+            tris[j] = wb[j].intersectsBox(strip) ? Ray.trisIn(list.get(j), strip) : new int[0];
+        }
         for (int k = 0; k < 8; k++) {
             float y = dimsH * (0.12f + k * 0.05f);
             V3 hit = null, hn = null;
             for (int i = 0; i < 5; i++) {
-                ray.set(V((i - 2) * 0.08, y, want * (dimsHl * 1.5 + 1)), V(0, 0, -want));
+                float x = (i - 2) * 0.08f;
+                ray.set(V(x, y, want * (dimsHl * 1.5 + 1)), V(0, 0, -want));
                 Ray.Hit best = null;
-                for (Mesh m : list) { Ray.Hit h = ray.intersectMesh(m); if (h != null && (best == null || h.dist < best.dist)) best = h; }
+                for (int j = 0; j < wb.length; j++) {
+                    Box3 b = wb[j];
+                    if (tris[j].length == 0 || x < b.min.x || x > b.max.x || y < b.min.y || y > b.max.y) continue;
+                    Ray.Hit h = ray.intersectMesh(list.get(j), tris[j], tris[j].length);
+                    if (h != null && (best == null || h.dist < best.dist)) best = h;
+                }
                 if (best == null || (hit != null && Math.abs(best.point.z) <= Math.abs(hit.z))) continue;
                 hit = best.point.clone(); hn = best.normal.clone();
             }
@@ -801,10 +897,15 @@ final class CarPage implements Stage.Page {
         }
         return new float[] { 0, dimsH * 0.3f, want * dimsHl * 0.98f }; // 一台都没找到（模型很怪）：按外框兜底
     }
-    /** 位置、角度（pitch 上仰、yaw 站在牌子前面看往右转为正）；没摆过的先自动摆 */
+    /** 位置、角度（pitch 上仰、yaw 站在牌子前面看往右转为正）；没摆过的先自动摆（位置记进配置，交回界面） */
     private void plateXform(Obj3D m, JSONObject p) {
         JSONArray at = p.optJSONArray("at");
-        float[] a = at != null && at.length() == 3 ? new float[] { (float) at.optDouble(0), (float) at.optDouble(1), (float) at.optDouble(2) } : plateAuto((String) m.get("which"));
+        float[] a;
+        if (at != null && at.length() == 3) a = new float[] { (float) at.optDouble(0), (float) at.optDouble(1), (float) at.optDouble(2) };
+        else {
+            a = plateAuto((String) m.get("which"));
+            try { p.put("at", new JSONArray().put(r3(a[0])).put(r3(a[1])).put(r3(a[2]))); autoAt.add((String) m.get("which")); } catch (Exception ignored) { }
+        }
         m.position.set(a[0], a[1], a[2]);
         m.rotate((float) (-p.optDouble("pitch", 0) * DEG), (float) (("front".equals(m.get("which")) ? 0 : Math.PI) + p.optDouble("yaw", 0) * DEG), 0, "YXZ");
     }
@@ -834,6 +935,91 @@ final class CarPage implements Stage.Page {
     private void restore(List<Object[]> keep) {
         for (Object[] x : keep) { ((Obj3D) x[0]).position.copy((V3) x[1]); ((Obj3D) x[0]).quaternion.copy((com.x3card.car3d.gl.Quat) x[2]); }
         root.updateMatrixWorld(true);
+    }
+    /** 设置里"调整车牌"开着：正在调哪块（能按住拖；车保持静止）；镜头看着它；正拖着时：起点、在哪个平面上拖、手指按下的地方离牌子中心多远 */
+    private String pkey;
+    private Frame plateV;
+    private V3 pdrag, pdragN, pdragOff;
+    /** 开 / 换前后（which）、关（null） */
+    void plateEdit(String which) {
+        pkey = which;
+        pdrag = null;
+        if (which == null) { if (plateV != null) { plateV = null; vHoming = true; vVaz = 0; } }
+        else { plateV = plateFrame(which); vHoming = true; vVaz = 0; }
+        if (root != null) app.invalidate();
+    }
+    /** 看这块车牌的角度（后牌同网页版车牌页的 [π − 0.4, 0.32]，前牌左右对称），稍微拉近 */
+    private Frame plateFrame(String which) {
+        boolean front = "front".equals(which);
+        Frame f = new Frame();
+        f.view = new float[] { front ? 0.4f : (float) (Math.PI - 0.4), 0.32f };
+        Obj3D m = root != null && plates != null ? plates.get(which) : null;
+        if (m != null) {
+            List<Object[]> keep = parts != null ? restPose() : null; // 尾门正开着（刚进来还在关）：按关着的样子量
+            try { f.at = m.getWorldPosition(new V3()); } finally { if (keep != null) restore(keep); }
+        } else f.at = V(0, dimsH * 0.3, (front ? 1 : -1) * dimsHl * 0.98);
+        f.zoom = f.want = 0.25f;
+        return f;
+    }
+    /** 按在正在调的那块上：投到屏幕上的牌子范围（外扩一点），或者离中心 0.9rem 以内 */
+    private boolean plateHit(float x, float y) {
+        Obj3D m = plates != null && pkey != null ? plates.get(pkey) : null;
+        if (m == null || !inScene(m) || camera == null || root == null) return false;
+        m.updateWorldMatrix(true, false);
+        V3 c0 = m.getWorldPosition(new V3()), nz = V(0, 0, 1).applyMatrix4(m.matrixWorld).sub(c0);
+        if (nz.dot(camera.position.clone().sub(c0)) <= 0) return false; // 牌面背对着镜头（在车的另一头，被车挡着）
+        Object wo = m.get("w"), ho = m.get("h");
+        float w = wo instanceof Float ? (Float) wo : 0.44f, h = ho instanceof Float ? (Float) ho : 0.14f;
+        float l = 1e9f, r = -1e9f, t = 1e9f, b = -1e9f;
+        for (int i = 0; i < 4; i++) {
+            V3 q = V((i & 1) != 0 ? w / 2 : -w / 2, (i & 2) != 0 ? h / 2 : -h / 2, 0).applyMatrix4(m.matrixWorld).project(camera);
+            float sx = (q.x + 1) / 2 * W, sy = (1 - q.y) / 2 * H;
+            l = Math.min(l, sx); r = Math.max(r, sx); t = Math.min(t, sy); b = Math.max(b, sy);
+        }
+        float pad = remPx * 0.25f, cx = (l + r) / 2, cy = (t + b) / 2;
+        return x >= l - pad && x <= r + pad && y >= t - pad && y <= b + pad || Math.hypot(x - cx, y - cy) < remPx * 0.9f;
+    }
+    /** 按住车牌：在牌子自己所在的平面上拖（只上下左右走，前后深度不变，不会一拖就钻进车身；深度用"前后"滑块调）；
+        镜头差不多侧着看、贴着牌面拖不准时，改在过车牌、朝着镜头的平面上拖。记下手指离牌子中心多远，拖的时候牌子不跳到手指底下 */
+    private void plateGrab(float x, float y) {
+        Obj3D m = plates.get(pkey);
+        pdrag = m.getWorldPosition(new V3());
+        V3 face = V(0, 0, 1).applyMatrix4(m.matrixWorld).sub(pdrag).normalize(), cam = camera.getWorldDirection(new V3());
+        pdragN = Math.abs(face.dot(cam)) > 0.3f ? face : cam;
+        pdragOff = new V3();
+        ray.setFromCamera(x / W * 2 - 1, 1 - y / H * 2, camera);
+        V3 h = ray.intersectPlane(pdragN, pdrag, new V3());
+        if (h == null) { pdragN = cam; h = ray.intersectPlane(pdragN, pdrag, new V3()); }
+        if (h != null) pdragOff.subVectors(pdrag, h);
+    }
+    /** 拖（拖出部件的范围先回到车底下） */
+    private void plateMove(float x, float y) {
+        Obj3D m = plates != null && pkey != null ? plates.get(pkey) : null;
+        if (m == null) return;
+        ray.setFromCamera(x / W * 2 - 1, 1 - y / H * 2, camera);
+        V3 o = ray.intersectPlane(pdragN, pdrag, new V3());
+        if (o == null) return;
+        if (m.parent != root) root.attach(m);
+        m.position.copy(o.add(pdragOff));
+        app.invalidate();
+    }
+    /** 松手：位置记进配置、交回界面存起来，再看挂在哪个部件上；手势被打断就回原位 */
+    private void plateDone(boolean cancel) {
+        Obj3D m = plates != null && pkey != null ? plates.get(pkey) : null;
+        JSONObject st = cfg != null ? cfg.optJSONObject("plates") : null, p = st != null && pkey != null ? st.optJSONObject(pkey) : null;
+        if (m == null || p == null) return;
+        if (!cancel) {
+            V3 w = m.getWorldPosition(new V3());
+            try {
+                JSONArray at = new JSONArray().put(r3(w.x)).put(r3(w.y)).put(r3(w.z));
+                p.put("at", at);
+                final PlateOut po = plateOut;
+                final String kk = pkey, aj = at.toString();
+                if (po != null) app.ui(() -> { try { po.plateAt(kk, new JSONArray(aj), true); } catch (Exception ignored) { } });
+            } catch (Exception ignored) { }
+        }
+        platePlace(m, p);
+        app.invalidate();
     }
     interface Pos { V3 of(JSONArray a); }
     private static boolean seen(Mesh m) { return m.visible && !m.skinned; }
@@ -1782,7 +1968,7 @@ final class CarPage implements Stage.Page {
         boolean moving = false;
         for (Map.Entry<String, Float> e : want.entrySet()) {
             String k = e.getKey();
-            float a = cur.containsKey(k) ? cur.get(k) : e.getValue(), b = e.getValue();
+            float b = pkey != null ? 0 : e.getValue(), a = cur.containsKey(k) ? cur.get(k) : b; // 调车牌时门窗、盖都按关着摆
             if (Math.abs(a - b) > 0.002f) { a += (b - a) * (1 - (float) Math.exp(-dt * 5)); moving = true; shadowDirty = true; } else a = b;
             if (!cur.containsKey(k) || a != cur.get(k)) shadowDirty = true;
             cur.put(k, a);
@@ -1818,9 +2004,10 @@ final class CarPage implements Stage.Page {
         if (Math.abs(angK - aw) > 0.002f) { angK += (aw - angK) * (1 - (float) Math.exp(-dt * 4.5)); moving = true; } else angK = aw;
         lookTick();
         float qt = topNow() || preview && previewTop ? 1 : 0;
-        float[] pvv = pin != null && pin.v != null ? pin.v.view : null;
-        V3 ft = pvv != null ? pin.v.at : tour != null ? tour.at : doorNow() ? doorV.at : null;
-        float fz = pvv != null ? pin.v.zoom : tour != null ? tour.zoom : doorNow() ? doorV.zoom : focusZ, fw = ft != null ? 1 : 0;
+        Frame pf = plateV != null ? plateV : pin != null ? pin.v : null;
+        float[] pvv = pf != null ? pf.view : null;
+        V3 ft = pvv != null ? pf.at : tour != null ? tour.at : doorNow() ? doorV.at : null;
+        float fz = pvv != null ? pf.zoom : tour != null ? tour.zoom : doorNow() ? doorV.zoom : focusZ, fw = ft != null ? 1 : 0;
         if (ft != null) {
             if (focusAt == null || focusK < 0.002f) { focusAt = ft.clone(); focusZ = fz; }
             else if (focusAt.distanceToSquared(ft) > 1e-6f) { focusAt.lerp(ft, 1 - (float) Math.exp(-dt * 2.4)); moving = true; } else focusAt.copy(ft);
@@ -1887,7 +2074,7 @@ final class CarPage implements Stage.Page {
         }
         if (root != null && ch) app.invalidate();
     }
-    private boolean canLook() { return root != null && introT >= 1 && !showOn && visibleNow; }
+    private boolean canLook() { return root != null && introT >= 1 && !showOn && pkey == null && visibleNow; }
     boolean visibleNow = true;
     private boolean canTour() { return wheels != null && canLook(); }
     private void lookTick() {
@@ -1927,6 +2114,7 @@ final class CarPage implements Stage.Page {
         if (n > 1) tourTimer = app.later(TOUR_HOLD + 1250, () -> { if (root != null) app.invalidate(); });
     }
     private void stopLook() {
+        plateV = null;
         if (tour != null || pin != null) { tour = null; pin = null; app.cancel(tourTimer); }
         tyreOff = true;
         if (doorV != null || doorDue != 0) { doorV = null; doorDue = doorEnd = 0; }
@@ -2031,8 +2219,9 @@ final class CarPage implements Stage.Page {
         for (V3 c : pts) { V3 q = c.clone().project(camera); mx = Math.max(mx, Math.abs(q.x)); my = Math.max(my, q.y); mn = Math.min(mn, q.y); }
         return mx <= fitA[1] && my <= fitA[2] + fitA[0] && mn >= fitA[2] - fitA[0];
     }
-    private boolean topNow() { return topOn && !preview && tour == null && !(pin != null && pin.v != null); }
+    private boolean topNow() { return topOn && !preview && pkey == null && tour == null && !(pin != null && pin.v != null); }
     private float[] home() {
+        if (plateV != null) return plateV.view;
         if (pin != null && pin.v != null) return pin.v.view;
         if (tour != null) return tour.view;
         if (topNow() || preview && previewTop) return TOP;
@@ -2179,11 +2368,14 @@ final class CarPage implements Stage.Page {
     // ================= 手势 =================
     @Override public boolean grab(float x, float y) {
         touchAt = now();
+        pdrag = null; // 上一次按在车牌上没拖就抬起来了（只算点了一下，不会调 release）
         if (root == null) return false;
+        if (pkey != null && plateHit(x, y)) { plateGrab(x, y); return true; }
         ray.setFromCamera(x / W * 2 - 1, 1 - y / H * 2, camera);
         return ray.intersectsBox(hitBox);
     }
     @Override public void drag(float dx, float dy, float x, float y) {
+        if (pdrag != null) { plateMove(x, y); return; }
         vHoming = false; vVaz = 0; topLast = now();
         stopLook();
         if (introT < 1 && introRot != 0) { float r = 1 - easeOut(introT); vAz += r * INTRO[0]; vEl += r * INTRO[1]; introRot = 0; }
@@ -2192,6 +2384,7 @@ final class CarPage implements Stage.Page {
         hint();
     }
     @Override public void release(float vx, float x, float y, boolean cancel) {
+        if (pdrag != null) { pdrag = null; plateDone(cancel); return; }
         vVaz = -vx * 0.13f; topLast = now(); app.invalidate();
         app.cancel(topBack);
         if (topOn) topBack = app.later(6100, () -> { if (root != null) app.invalidate(); });
@@ -2199,7 +2392,7 @@ final class CarPage implements Stage.Page {
     @Override public void tap(float x, float y) {
         statusClose();
         long t = now();
-        if (t - lastTap < 450) { stopLook(); vHoming = true; vVaz = 0; app.invalidate(); lastTap = 0; } else lastTap = t;
+        if (t - lastTap < 450) { stopLook(); if (pkey != null) plateV = plateFrame(pkey); vHoming = true; vVaz = 0; app.invalidate(); lastTap = 0; } else lastTap = t; // 调车牌时双击回到看这块车牌
     }
     @Override public void wake(boolean on) { visibleNow = on; if (on) app.invalidate(); }
     /** 全部车况开 / 关：车让到面板旁边，但不转到侧面、照样挂 D 挡转到车顶看，胎压标签照样显示（同 aside） */

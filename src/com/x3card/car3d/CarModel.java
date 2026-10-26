@@ -164,30 +164,8 @@ final class CarModel {
             }
             JSONArray tp = c.optJSONArray("turnPos");
             if (tp != null && tp.length() == 2 && vec(tp.opt(0)) != null && vec(tp.opt(1)) != null) o.put("turnPos", new JSONArray().put(vec(tp.opt(0))).put(vec(tp.opt(1))));
-            JSONObject pl = c.optJSONObject("plates");
-            if (pl != null) {
-                JSONObject ps = new JSONObject();
-                if (Arrays.asList("blue", "green", "yellow", "bignev", "police", "emergency", "coach", "trailer", "lowspeed", "embassy", "consulate", "hkmo", "custom").contains(pl.opt("style"))) ps.put("style", pl.optString("style"));
-                if (pl.opt("text") instanceof String) ps.put("text", cut(pl.optString("text").toUpperCase().replaceAll("[^A-Z0-9\\u4e00-\\u9fa5]", ""), 8));
-                if (hex(pl.opt("bg"))) ps.put("bg", pl.optString("bg").toLowerCase());
-                if (hex(pl.opt("fg"))) ps.put("fg", pl.optString("fg").toLowerCase());
-                for (String k : new String[] { "front", "rear" }) {
-                    JSONObject xp = pl.optJSONObject(k);
-                    if (xp == null) continue;
-                    JSONObject y = new JSONObject();
-                    if (Boolean.TRUE.equals(xp.opt("on"))) y.put("on", true);
-                    if (vec(xp.opt("at")) != null) y.put("at", vec(xp.opt("at")));
-                    Double w = num(xp.opt("w"), 0.2, 0.8); if (w != null) y.put("w", w);
-                    Double yaw = num(xp.opt("yaw"), -60, 60); if (yaw != null) y.put("yaw", yaw);
-                    Double pitch = num(xp.opt("pitch"), -60, 60); if (pitch != null) y.put("pitch", pitch);
-                    boolean v2 = Integer.valueOf(2).equals(pl.opt("v")) || (pl.opt("v") instanceof Number && ((Number) pl.opt("v")).intValue() == 2);
-                    if (!v2 && "front".equals(k) && y.has("yaw") && y.getDouble("yaw") != 0) y.put("yaw", -y.getDouble("yaw"));
-                    if (!v2 && "rear".equals(k) && y.has("pitch") && y.getDouble("pitch") != 0) y.put("pitch", -y.getDouble("pitch"));
-                    ps.put(k, y);
-                }
-                ps.put("v", 2);
-                if (ps.has("front") || ps.has("rear") || ps.has("style") || ps.has("text")) o.put("plates", ps);
-            }
+            JSONObject ps = cleanPlates(c.opt("plates"));
+            if (ps != null) o.put("plates", ps);
             JSONArray wr = c.optJSONArray("wraps");
             if (wr != null) {
                 JSONArray ws = new JSONArray();
@@ -197,6 +175,38 @@ final class CarModel {
             }
         } catch (Exception e) { Log.w("car3d", "车模配置读不出来", e); return null; }
         return o.has("length") || o.has("scale") ? o : null;
+    }
+    static final List<String> PLATE_STYLES = Arrays.asList("blue", "green", "yellow", "bignev", "police", "emergency", "coach", "trailer", "lowspeed", "embassy", "consulate", "hkmo", "custom");
+    /** 车牌配置（车模包里的、自己改了存着的都走这里）：只留认识且合法的字段；以前存的（没写 v: 2）前牌左右偏、后牌上仰方向反过来。什么都没有返回 null */
+    static JSONObject cleanPlates(Object x) {
+        if (!(x instanceof JSONObject)) return null;
+        JSONObject pl = (JSONObject) x, ps = new JSONObject();
+        try {
+            if (PLATE_STYLES.contains(pl.opt("style"))) ps.put("style", pl.optString("style"));
+            if (pl.opt("text") instanceof String) ps.put("text", cut(pl.optString("text").toUpperCase().replaceAll("[^A-Z0-9\\u4e00-\\u9fa5]", ""), 8));
+            if (hex(pl.opt("bg"))) ps.put("bg", pl.optString("bg").toLowerCase());
+            if (hex(pl.opt("fg"))) ps.put("fg", pl.optString("fg").toLowerCase());
+            boolean v2 = pl.opt("v") instanceof Number && ((Number) pl.opt("v")).intValue() == 2;
+            for (String k : new String[] { "front", "rear" }) {
+                JSONObject y = plateSide(pl.optJSONObject(k), k, v2);
+                if (y != null) ps.put(k, y);
+            }
+            ps.put("v", 2);
+        } catch (Exception e) { return null; }
+        return ps.has("front") || ps.has("rear") || ps.has("style") || ps.has("text") ? ps : null;
+    }
+    /** 一块车牌（前 / 后）：开关、位置、宽度、角度 */
+    static JSONObject plateSide(JSONObject xp, String k, boolean v2) throws Exception {
+        if (xp == null) return null;
+        JSONObject y = new JSONObject();
+        if (Boolean.TRUE.equals(xp.opt("on"))) y.put("on", true);
+        if (vec(xp.opt("at")) != null) y.put("at", vec(xp.opt("at")));
+        Double w = num(xp.opt("w"), 0.2, 0.8); if (w != null) y.put("w", w);
+        Double yaw = num(xp.opt("yaw"), -60, 60); if (yaw != null) y.put("yaw", yaw);
+        Double pitch = num(xp.opt("pitch"), -60, 60); if (pitch != null) y.put("pitch", pitch);
+        if (!v2 && "front".equals(k) && y.has("yaw") && y.getDouble("yaw") != 0) y.put("yaw", -y.getDouble("yaw"));
+        if (!v2 && "rear".equals(k) && y.has("pitch") && y.getDouble("pitch") != 0) y.put("pitch", -y.getDouble("pitch"));
+        return y;
     }
     static final int MAX_WRAPS = 40;
     private static String cut(String s, int n) { return s.length() > n ? s.substring(0, n) : s; }

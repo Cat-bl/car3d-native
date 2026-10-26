@@ -40,11 +40,13 @@
 
 打不开时：GitHub 在国内有时连不上，可以换个网络或者过一会儿再试；也可以把网页版下载下来（[Cat-bl/car3d-web](https://github.com/Cat-bl/car3d-web) 页面上的 Code → Download ZIP，或者找能打开的人要一份），解压后用电脑浏览器打开里面的 `index.html`，用法一样。
 
-车模包的配置写在 GLB 的 `asset.extras.d3car` 里，车牌、贴纸在这里照样显示。车模包还带一个格式版本号（`asset.extras.d3fmt`）：网页版以后加了这个应用还显示不了的设置时，版本号会变大，导入时会提示更新应用。
+车模包的配置写在 GLB 的 `asset.extras.d3car` 里，车牌、贴纸在这里照样显示。
+
+车牌在这个应用里也能改（设置 → 车模 → 车牌 → 调整车牌）：前、后各自挂不挂，牌种（蓝牌、绿牌、黄牌、警车、应急、使馆、港澳等，也能自定义颜色），按国标的按键敲号；宽度、位置、角度用滑块调，也能按住车上的车牌拖。改的单独存着，车模包文件不动：车牌号、牌种换了车模照样用；位置按车模分开记，车模包里摆好的先用上。车模包还带一个格式版本号（`asset.extras.d3fmt`）：网页版以后加了这个应用还显示不了的设置时，版本号会变大，导入时会提示更新应用。
 
 ## 设置
 
-- 车模：导入车模包、恢复默认。
+- 车模：导入车模包、恢复默认、调整车牌。
 - 外观：车漆颜色和质感（原厂、亮面、金属、珠光、缎面、哑光、磨砂金属、糖果、电镀、变色龙），轮毂、刹车卡钳颜色。
 - 背景与视角：背景（影棚 / 暖调 / 冷调，或者自己的图片）、默认视角、挂 D 挡后的视角。
 - 底部数据、深浅色（跟随车机 / 浅色 / 深色）、胎压标签、进场动画、全屏时收起状态栏。
@@ -110,7 +112,8 @@ node build.mjs --install  # 打完用 adb install -r 装上（adb 要在 PATH �
 | `CarData.java` / `CarStat.java` | 订阅车况、解码；车况图标、底部数据 |
 | `CarPage.java` | 建车、车况怎么动、灯、镜头、手势 |
 | `CarModel.java` / `GeoCache.java` / `Settings.java` | 车模存取、配置校验、默认车模的内置配置；解好的几何缓存；设置存取 |
-| `Lamp.java` / `Plates.java` / `WrapArt.java` / `WrapCut.java` / `Wraps.java` | 车灯的点亮层和路面光束、车牌、贴纸 |
+| `Lamp.java` / `Plates.java` / `WrapArt.java` / `WrapCut.java` / `Wraps.java` | 车灯的点亮层和路面光束、车牌（画牌面、自己改的存取）、贴纸 |
+| `PlatePanel.java` / `PlateRule.java` | 车牌面板（牌种、敲号、位置）；车牌号的国标规则 |
 | `Stage.java` / `Mirror.java` / `Post.java` / `SceneView.java` / `Bg.java` / `Background.java` | 出帧和省电、地面反射、辉光和环境光遮蔽、画布、背景渐变、背景图片 |
 | `Hud.java` / `Tags.java` / `CarUi.java` / `Sheet.java` / `Panel.java` / `InfoPanel.java` / `Busy.java` / `SvgPath.java` | 界面：顶栏和文字、胎压标签、按钮和提示、设置面板、全部车况、导入进度、图标路径 |
 | `InfoView.java` / `FullActivity.java` | 连不上宿主、没授权时的说明和授权按钮；全屏页 |

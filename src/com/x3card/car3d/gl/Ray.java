@@ -39,7 +39,9 @@ public final class Ray {
     public Ray set(V3 o, V3 d) { origin.copy(o); direction.copy(d).normalize(); return this; }
     /** 打到网格上（同 Mesh.raycast：按材质的正反面剔除、拿最近的三角形）：返回 { 距离, 世界坐标的点, 世界坐标的面法线 }，打不到 null */
     public static final class Hit { public float dist; public final V3 point = new V3(), normal = new V3(); public Mesh object; }
-    public Hit intersectMesh(Mesh m) {
+    public Hit intersectMesh(Mesh m) { return intersectMesh(m, null, 0); }
+    /** 只看 tris 里的前 nt 个三角形（三角形第一个顶点在索引里的位置，见 trisIn）；tris 为空看全部 */
+    public Hit intersectMesh(Mesh m, int[] tris, int nt) {
         Geo g = m.geometry;
         Attr pos = g == null ? null : g.attr("position");
         if (pos == null || m.material == null) return null;
@@ -56,7 +58,9 @@ public final class Ray {
         V3 a = new V3(), e1 = new V3(), e2 = new V3(), v1 = new V3(), v2 = new V3();
         float best = Float.POSITIVE_INFINITY;
         float nx = 0, ny = 0, nz = 0;
-        for (int t = 0; t + 2 < n; t += 3) {
+        int cnt = tris != null ? nt : n / 3;
+        for (int q = 0; q < cnt; q++) {
+            int t = tris != null ? tris[q] : q * 3;
             pos.v3(ix != null ? ix.idx(t) : t, a); pos.v3(ix != null ? ix.idx(t + 1) : t + 1, v1); pos.v3(ix != null ? ix.idx(t + 2) : t + 2, v2);
             e1.subVectors(v1, a); e2.subVectors(v2, a);
             // 法线 e1 × e2；朝着射线的是背面
@@ -83,5 +87,27 @@ public final class Ray {
         h.point.copy(direction).multiplyScalar(best).add(origin);
         h.normal.set(nx, ny, nz).applyMatrix3(new M3().getNormalMatrix(m.matrixWorld)).normalize();
         return h;
+    }
+    /** 外框（世界坐标）碰得到的三角形：每个三角形第一个顶点在索引里的位置。同一块地方要打很多条射线时先挑一遍，每条射线只看这些 */
+    public static int[] trisIn(Mesh m, Box3 world) {
+        Geo g = m.geometry;
+        Attr pos = g == null ? null : g.attr("position");
+        if (pos == null) return new int[0];
+        Box3 lb = world.clone().applyMatrix4(m.matrixWorld.clone().invert());
+        Attr ix = g.index;
+        int n = ix != null ? ix.count : pos.count, c = 0;
+        int[] out = new int[64];
+        for (int t = 0; t + 2 < n; t += 3) {
+            float x0 = Float.POSITIVE_INFINITY, y0 = x0, z0 = x0, x1 = Float.NEGATIVE_INFINITY, y1 = x1, z1 = x1;
+            for (int k = 0; k < 3; k++) {
+                int v = ix != null ? ix.idx(t + k) : t + k;
+                float x = pos.get(v, 0), y = pos.get(v, 1), z = pos.get(v, 2);
+                if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+            }
+            if (x1 < lb.min.x || x0 > lb.max.x || y1 < lb.min.y || y0 > lb.max.y || z1 < lb.min.z || z0 > lb.max.z) continue;
+            if (c == out.length) out = java.util.Arrays.copyOf(out, out.length * 2);
+            out[c++] = t;
+        }
+        return java.util.Arrays.copyOf(out, c);
     }
 }

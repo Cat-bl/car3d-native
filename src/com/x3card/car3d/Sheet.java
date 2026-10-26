@@ -359,6 +359,33 @@ abstract class Sheet extends FrameLayout {
         }
     }
 
+    /** 自动换行的一排（标签、分组名；分组名独占一行） */
+    protected final class Flow extends ViewGroup {
+        Flow(Context c) { super(c); }
+        @Override protected void onMeasure(int ws, int hs) {
+            int w = MeasureSpec.getSize(ws), x = 0, y = 0, lh = 0, gap = px(0.08f);
+            for (int i = 0; i < getChildCount(); i++) {
+                View v = getChildAt(i);
+                v.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.AT_MOST), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+                boolean br = "break".equals(v.getTag());
+                if (br || x + v.getMeasuredWidth() > w) { if (x > 0) { y += lh + gap; x = 0; lh = 0; } }
+                x += v.getMeasuredWidth() + gap; lh = Math.max(lh, v.getMeasuredHeight());
+                if (br) { y += lh + gap / 2; x = 0; lh = 0; }
+            }
+            setMeasuredDimension(w, y + lh);
+        }
+        @Override protected void onLayout(boolean ch, int l, int t, int r, int b) {
+            int w = r - l, x = 0, y = 0, lh = 0, gap = px(0.08f);
+            for (int i = 0; i < getChildCount(); i++) {
+                View v = getChildAt(i);
+                boolean br = "break".equals(v.getTag());
+                if (br || x + v.getMeasuredWidth() > w) { if (x > 0) { y += lh + gap; x = 0; lh = 0; } }
+                v.layout(x, y, x + v.getMeasuredWidth(), y + v.getMeasuredHeight());
+                x += v.getMeasuredWidth() + gap; lh = Math.max(lh, v.getMeasuredHeight());
+                if (br) { y += lh + gap / 2; x = 0; lh = 0; }
+            }
+        }
+    }
     /** 圆形图标键（关闭）：路径同网页版的 svg */
     static final class IconBtn extends View {
         final String d; final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); int bg = 0x14ffffff, fg = 0xffeef1f6;

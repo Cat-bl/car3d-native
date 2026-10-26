@@ -19,6 +19,7 @@ import android.widget.FrameLayout;
 import com.x3card.car3d.ach.AchPage;
 import com.x3card.car3d.ach.Trophies;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.lang.ref.WeakReference;
@@ -48,6 +49,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     private InfoView info;
     private InfoPanel infoP;
     private DebugPanel dbgP;
+    private PlatePanel plateP;
     private Trophies tro;
     private AchPage achP;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -86,6 +88,17 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             ui.hud.setDemo(true);
             ui.panel.setDebug(true);
         }
+        plateP = new PlatePanel(this, S, new PlatePanel.Act() {
+            @Override public void plates(JSONObject st) { pushPlates(st); }
+            @Override public void edit(String side) { final CarPage p = page; view.queueEvent(() -> p.plateEdit(side)); }
+            @Override public void closed() {
+                final CarPage p = page;
+                view.queueEvent(() -> p.plateEdit(null));
+                ui.panel.setPlates(Plates.state(plateP.current()));
+                sheetClosed();
+            }
+        });
+        ui.addView(plateP, new FrameLayout.LayoutParams(-1, -1));
         achP = new AchPage(this);
         root.addView(achP, new FrameLayout.LayoutParams(-1, -1));
         ui.onTheme = (d, k) -> achP.setDark(d, k);
@@ -111,6 +124,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         stage.fx = S.fx();
         page = new CarPage(this, S, ui);
         page.needs = () -> main.post(this::wants);
+        page.plateOut = plateOut;
         page.unitOf = data::unit;
         view = new SceneView(this, stage, S.bool("aa"));
         view.setRatio(S.fx().ratio);
@@ -148,6 +162,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override public void onBackPressed() {
         if (achP.back()) return;
         if (ui.panelOpen()) ui.panel(false);
+        else if (plateP.isOpen()) plateP.show(false);
         else if (infoP.isOpen()) infoP.show(false);
         else if (dbgP != null && dbgP.isOpen()) dbgP.show(false);
         else super.onBackPressed();
@@ -184,6 +199,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         for (String k : KEYS) before.put(k, S.get(k));
         S.load();
         for (String k : KEYS) if (!String.valueOf(before.get(k)).equals(String.valueOf(S.get(k)))) S.emit(k);
+        final CarPage p = page;
+        view.queueEvent(p::platesFromStore); // 车牌：全屏页、小窗口另一边可能改过
     }
     private static final String[] KEYS = { "paint", "rim", "caliper", "finish", "paintHex", "rimHex", "calHex", "theme", "bg", "bgDim", "viewAz", "viewEl", "viewZoom", "viewFov",
         "stats", "labels", "intro", "quality", "fps", "aa", "fsBar" };
@@ -238,6 +255,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             case "bgImage": pick(PICK_BG, "image/*"); break;
             case "debug": debug(); break;
             case "achOpen": trophies(); break;
+            case "plates": plates(); break;
             case "achReset": tro.reset(); ui.toast("成就记录清空了", 2600); break;
             case "bgUse": if (Background.has(this)) S.set("bg", "image"); else pick(PICK_BG, "image/*"); break; // 没存过图片：先选一张
             default: view.queueEvent(() -> p.setting("act:" + name));
@@ -293,6 +311,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     /** 全部车况：设置开着先关掉；车让到旁边 */
     @Override public void allStatus() {
         if (ui.panelOpen()) ui.panel(false);
+        if (plateP.isOpen()) plateP.show(false);
         if (dbgP != null && dbgP.isOpen()) dbgP.show(false);
         infoP.open();
         ui.infoOpen(true);
@@ -305,14 +324,52 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         if (dbgP.isOpen()) { dbgP.show(false); return; }
         if (ui.panelOpen()) ui.panel(false);
         if (infoP.isOpen()) infoP.show(false);
+        if (plateP.isOpen()) plateP.show(false);
         dbgP.show(true);
         ui.infoOpen(true);
         final CarPage p = page;
         view.queueEvent(() -> p.aside(true));
     }
-    /** 全部车况、调试面板关上了：两个都关着才把车挪回来 */
+    /** 车牌（设置里"调整车牌"）：设置、全部车况、调试面板先关掉；车让到旁边，镜头转过去看着这块车牌 */
+    private void plates() {
+        if (ui.panelOpen()) ui.panel(false);
+        if (infoP.isOpen()) infoP.show(false);
+        if (dbgP != null && dbgP.isOpen()) dbgP.show(false);
+        if (!plateP.ready()) { ui.toast("车模还在载入，等一下再打开", 2600); return; }
+        plateP.open();
+        ui.infoOpen(true);
+        final CarPage p = page;
+        view.queueEvent(() -> p.aside(true));
+    }
+    /** 车上交回来的车牌（建好车时的配置、自动摆的 / 拖完的位置）：已经在主线程 */
+    private final CarPage.PlateOut plateOut = new CarPage.PlateOut() {
+        @Override public void plates(JSONObject st, float[] dims, String key) {
+            if (plateP == null) return;
+            plateP.setData(st, dims, key);
+            ui.panel.setPlates(Plates.state(st));
+        }
+        @Override public void plateAt(String which, JSONArray at, boolean drag) {
+            if (plateP == null) return;
+            plateP.plateAt(which, at, drag);
+            ui.panel.setPlates(Plates.state(plateP.current()));
+        }
+    };
+    /** 车牌改了交给车：拖滑块时一帧只交最新的一份 */
+    private final Object plateLock = new Object();
+    private JSONObject plateNext;
+    private boolean platePosted;
+    private void pushPlates(JSONObject st) {
+        synchronized (plateLock) { plateNext = st; if (platePosted) return; platePosted = true; }
+        final CarPage p = page;
+        view.queueEvent(() -> {
+            JSONObject s;
+            synchronized (plateLock) { s = plateNext; plateNext = null; platePosted = false; }
+            if (s != null) p.setPlates(s);
+        });
+    }
+    /** 全部车况、调试面板、车牌关上了：都关着才把车挪回来 */
     private void sheetClosed() {
-        boolean any = infoP.isOpen() || dbgP != null && dbgP.isOpen();
+        boolean any = infoP.isOpen() || dbgP != null && dbgP.isOpen() || plateP != null && plateP.isOpen();
         ui.infoOpen(any);
         if (any) return;
         final CarPage p = page;
@@ -324,6 +381,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         if (ui.panelOpen()) ui.panel(false);
         if (infoP.isOpen()) infoP.show(false);
         if (dbgP != null && dbgP.isOpen()) dbgP.show(false);
+        if (plateP.isOpen()) plateP.show(false);
         ui.achToast.clear();
         String b = S.str("bg");
         achP.setDark(ui.darkTo(), ui.hud.darkK());

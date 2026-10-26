@@ -25,13 +25,16 @@ import com.x3card.car3d.gl.Tex;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 /**
  * 车牌（照网页版 car3d.js 的车牌部分，按国标 GA 36-2018 的图 1～8、图 19 画；应急牌照国办 2018 年的通知）：版式、颜色两张表，
  * 牌面用安卓画布画（字形用国标字样 plate-font.json，国标里没有的"应""急"用系统字体近似），一块 3 毫米厚的圆角薄板 + 正面贴牌面。
- * 位置、角度、跟着会动的部件走在 CarPage 里
+ * 位置、角度、跟着会动的部件走在 CarPage 里。自己在设置里改的（PlatePanel）单独存着，建车时盖在车模包的配置上（load / merge）
  */
 final class Plates {
     private Plates() {}
@@ -270,7 +273,112 @@ final class Plates {
         grp.add(new Mesh(bg, bm));
         grp.add(new Mesh(fg, fm));
         grp.visible = p != null && p.optBoolean("on");
-        grp.put("w", w);
+        grp.put("w", w); grp.put("h", h);
         return grp;
+    }
+
+    // ================= 自己改的车牌（存在 d3 的 plates 键，车模包文件不动） =================
+    // own：跟着人走的牌种、号、自定义底色 / 字色，换了车模照样用；models：跟着车模走的，每台车前 / 后各一块的开关、位置、宽度、角度，最多记 8 台
+    static final String[] SIDES = { "front", "rear" };
+    private static final String[] OWN = { "style", "text", "bg", "fg" };
+    private static final int MODELS = 8;
+    private static android.content.SharedPreferences prefs(Context c) { return c.getSharedPreferences("d3", Context.MODE_PRIVATE); }
+    /** 读出来（外来数据照样校验，坏了当没改过）：{ own, models: { 车模: { front, rear, t } } } */
+    static synchronized JSONObject load(Context c) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("models", new JSONObject());
+            JSONObject x = new JSONObject(prefs(c).getString("plates", "{}"));
+            JSONObject own = CarModel.cleanPlates(x.optJSONObject("own"));
+            if (own != null) {
+                JSONObject y = new JSONObject();
+                for (String k : OWN) if (own.has(k)) y.put(k, own.get(k));
+                if (y.has("style")) o.put("own", y);
+            }
+            JSONObject ms = x.optJSONObject("models");
+            if (ms != null) for (Iterator<String> it = ms.keys(); it.hasNext(); ) {
+                String k = it.next();
+                JSONObject m = ms.optJSONObject(k), y = new JSONObject();
+                if (m == null || k.length() > 300) continue;
+                for (String sd : SIDES) { JSONObject q = CarModel.plateSide(m.optJSONObject(sd), sd, true); if (q != null) y.put(sd, q); }
+                if (y.length() == 0) continue;
+                y.put("t", m.optLong("t"));
+                o.getJSONObject("models").put(k, y);
+            }
+        } catch (Exception e) { o = new JSONObject(); try { o.put("models", new JSONObject()); } catch (Exception ignored) { } }
+        return o;
+    }
+    private static void store(Context c, JSONObject o) { prefs(c).edit().putString("plates", o.toString()).apply(); }
+    /** 车模的认法：默认车模（导入的读不出来、先用了默认的也算）是 w70，导入的是"名字:文件大小"——同一个包重新导入还认得 */
+    static String modelKey(Context c, CarModel.Rec r) { return r == null || r.builtin ? "w70" : r.name + ":" + CarModel.file(c).length(); }
+    /** 建车用的：车模包里的车牌，盖上自己改过的——号、牌种改过就用自己的；某一块（前 / 后）在这台车上动过就用自己的，没动过用车模包的 */
+    static JSONObject merge(JSONObject pack, JSONObject st, String key) {
+        try {
+            JSONObject o = pack != null ? new JSONObject(pack.toString()) : new JSONObject();
+            JSONObject own = st.optJSONObject("own");
+            if (own != null) for (String k : OWN) { if (own.has(k)) o.put(k, own.get(k)); else o.remove(k); }
+            if (pack != null && !o.optString("style", "blue").equals(pack.optString("style", "blue"))) // 换成了自己的牌种：车模包按它的牌种调的宽度不用，回到国标宽度
+                for (String sd : SIDES) { JSONObject q = o.optJSONObject(sd); if (q != null) q.remove("w"); }
+            JSONObject ms = st.optJSONObject("models"), m = ms != null ? ms.optJSONObject(key) : null;
+            if (m != null) for (String sd : SIDES) if (m.has(sd)) o.put(sd, new JSONObject(m.getJSONObject(sd).toString()));
+            if (!o.has("style")) o.put("style", "blue");
+            if (!o.has("text")) o.put("text", "");
+            o.put("v", 2);
+            return o;
+        } catch (Exception e) { return pack; }
+    }
+    /** 号、牌种、自定义颜色改了：存成自己的 */
+    static synchronized void saveOwn(Context c, JSONObject plates) {
+        try {
+            JSONObject o = load(c), y = new JSONObject();
+            for (String k : OWN) if (plates.has(k)) y.put(k, plates.get(k));
+            o.put("own", y);
+            store(c, o);
+        } catch (Exception ignored) { }
+    }
+    /** 某一块在这台车上动过：整块存下来（只留最近用的 8 台车） */
+    static synchronized void saveSide(Context c, String key, String side, JSONObject p) {
+        try {
+            JSONObject o = load(c), ms = o.getJSONObject("models"), m = ms.optJSONObject(key);
+            if (m == null) { m = new JSONObject(); ms.put(key, m); }
+            JSONObject q = CarModel.plateSide(p, side, true);
+            if (q != null) m.put(side, q);
+            m.put("t", System.currentTimeMillis());
+            List<String> ks = new ArrayList<>();
+            for (Iterator<String> it = ms.keys(); it.hasNext(); ) ks.add(it.next());
+            while (ks.size() > MODELS) {
+                String old = null;
+                for (String k : ks) if (!k.equals(key) && (old == null || ms.getJSONObject(k).optLong("t") < ms.getJSONObject(old).optLong("t"))) old = k;
+                ms.remove(old); ks.remove(old);
+            }
+            store(c, o);
+        } catch (Exception ignored) { }
+    }
+    /** 这一块在这台车上动过没有 */
+    static boolean hasSide(Context c, String key, String side) {
+        JSONObject m = load(c).optJSONObject("models");
+        m = m != null ? m.optJSONObject(key) : null;
+        return m != null && m.has(side);
+    }
+    /** 换了牌种：存着的每台车的宽度都回到这种牌的国标宽度 */
+    static synchronized void clearWidths(Context c) {
+        try {
+            JSONObject o = load(c), ms = o.getJSONObject("models");
+            for (Iterator<String> it = ms.keys(); it.hasNext(); ) {
+                JSONObject m = ms.getJSONObject(it.next());
+                for (String sd : SIDES) if (m.optJSONObject(sd) != null) m.getJSONObject(sd).remove("w");
+            }
+            store(c, o);
+        } catch (Exception ignored) { }
+    }
+    /** 设置里那一行的状态："后 · 粤B·12345"，没挂"没挂" */
+    static String state(JSONObject st) {
+        if (st == null) return "";
+        JSONObject f = st.optJSONObject("front"), r = st.optJSONObject("rear");
+        boolean fo = f != null && f.optBoolean("on"), ro = r != null && r.optBoolean("on");
+        if (!fo && !ro) return "没挂";
+        String style = st.optString("style", "blue"), t = st.optString("text", "");
+        String side = fo && ro ? "前 + 后" : fo ? "前" : "后";
+        return side + " · " + (PlateRule.typed(style, t) == 0 ? PlateRule.typeName(style) + "，还没填号" : PlateRule.num(style, t, ro ? "rear" : "front", 0).toString().replace("＿", ""));
     }
 }
