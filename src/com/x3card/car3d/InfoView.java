@@ -40,10 +40,16 @@ public class InfoView extends View {
             p.setColor(0xb3000000);
             c.drawRect(0, 0, w, h, p);
             p.setTextAlign(Paint.Align.CENTER);
+            boolean ask = ready && !read && !bad;
+            if (ask && status != null && status.startsWith("已连接")) {
+                p.setTypeface(Typeface.DEFAULT);
+                p.setTextSize(rem * 0.2f);
+                p.setColor(0x80ffffff);
+                c.drawText(status, w / 2f, h / 2f - rem * 1.25f, p);
+            }
             p.setTypeface(Typeface.DEFAULT_BOLD);
             p.setTextSize(rem * 0.4f);
             p.setColor(0xffffffff);
-            boolean ask = ready && !read && !bad;
             c.drawText(ask ? "要读取车况" : status, w / 2f, h / 2f - rem * 0.7f, p);
             p.setTypeface(Typeface.DEFAULT);
             p.setTextSize(rem * 0.26f);
