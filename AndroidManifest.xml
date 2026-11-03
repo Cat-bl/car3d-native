@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 3D 车况（原生版）：车机 Android 10，宿主（com.wzw.bydmodule）的多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
+<!-- 3D 车况（原生版）：车机 Android 10。宿主可以是 BydModule 或 UiSetting，多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.x3card.car3d"
     android:versionCode="5"
@@ -7,8 +7,14 @@
 
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!--
+      显式绑定的两个 UiPlus 服务。Android 11 起包不可见就解析不到，所以两个宿主包都要声明：
+      com.wzw.bydmodule / com.wzw.bydmodule.uiplus.UiplusExternalService
+      com.wzw.uisetting / com.wzw.uisetting.uiplus.external.UiplusExternalService
+    -->
     <queries>
         <package android:name="com.wzw.bydmodule" />
+        <package android:name="com.wzw.uisetting" />
     </queries>
 
     <application

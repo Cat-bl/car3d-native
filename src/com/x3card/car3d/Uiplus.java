@@ -19,7 +19,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 宿主 UiPlus 给外部应用的接口（com.wzw.bydmodule 的 UiplusExternalService，AIDL IUiplusApi，跑在宿主的 :remote 进程）。
+ * 宿主 UiPlus 给外部应用的接口（AIDL IUiplusApi，跑在宿主的 :remote 进程）。
+ * 一个包绑两个宿主，按顺序试：先 com.wzw.bydmodule 的 UiplusExternalService，这个服务没有或绑不上再试
+ * com.wzw.uisetting 的 uiplus.external.UiplusExternalService。AIDL 描述符固定是 bydmodule 的
+ * IUiplusApi / IUiplusCallback，连 UiSetting 时也不改写。
  * 协议是从宿主 APK 2.2.1.10 反编译出来的（安卓那份接口文档没公开），和网页卡片是同一套方法：
  * - openSession(传输版本 3, 自己的包名, 回调) → {result: {sessionId, permissions: {readData, executeActions}, backendReady}} 或 {error}；
  *   宿主核对包名、调用方 UID、签名 SHA-256、首次安装时间，所以重装（先卸载）要重新授权，adb install -r 不用。
@@ -47,8 +50,12 @@ public final class Uiplus implements Host {
     }
 
     static final String TAG = "car3d";
-    private static final String PKG = "com.wzw.bydmodule";
-    private static final String SVC = "com.wzw.bydmodule.uiplus.UiplusExternalService";
+    /** 包名、服务类、界面上的名字。下标 0 优先；只有它没有或绑不上才试后面的。 */
+    private static final String[][] HOSTS = {
+        { "com.wzw.bydmodule", "com.wzw.bydmodule.uiplus.UiplusExternalService", "BydModule" },
+        { "com.wzw.uisetting", "com.wzw.uisetting.uiplus.external.UiplusExternalService", "UiSetting" },
+    };
+    /** 两边共用，不要按宿主包名改写 */
     private static final String API = "com.wzw.bydmodule.uiplus.IUiplusApi";
     private static final String CB = "com.wzw.bydmodule.uiplus.IUiplusCallback";
     private static final int T_OPEN = 1, T_AUTH_STATE = 2, T_REQUEST = 4, T_CLOSE = 6, T_COVER = 7;
@@ -62,6 +69,8 @@ public final class Uiplus implements Host {
     private IBinder remote;
     private String sid;
     private boolean started, bound, read, exec, authPending, backend;
+    private int host = -1; // 这次绑上的是 HOSTS 里的哪一个
+    private String deathWhy = "宿主进程重启了";
     private final Runnable later = this::stop;
     private int seq, gen;
 
@@ -78,19 +87,38 @@ public final class Uiplus implements Host {
         }
     };
 
-    private final IBinder.DeathRecipient death = () -> main.post(() -> lost("宿主进程重启了"));
+    private final IBinder.DeathRecipient death = () -> {
+        final String why = deathWhy;
+        main.post(() -> lost(why));
+    };
 
     private final ServiceConnection conn = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName n, IBinder b) {
+            host = hostOf(n);
+            Log.w(TAG, "已连上 " + hostName() + (n == null ? "" : " " + n.flattenToShortString()));
+            if (remote != null && remote != b) { try { remote.unlinkToDeath(death, 0); } catch (Exception ignored) { } }
             remote = b;
+            deathWhy = hostName() + " 进程重启了";
             try { b.linkToDeath(death, 0); } catch (Exception e) { Log.w(TAG, "linkToDeath", e); }
             final int g = gen;
             work.post(() -> open(g));
         }
 
         @Override
-        public void onServiceDisconnected(ComponentName n) { lost("和宿主断开了"); }
+        public void onServiceDisconnected(ComponentName n) { lost("和 " + nameOf(hostOf(n)) + " 断开了"); }
+
+        /** 服务在，但 onBind 给了 null：这个宿主没有可用接口，解开再试下一个 */
+        @Override
+        public void onNullBinding(ComponentName n) {
+            if (!bound) return;
+            Log.w(TAG, "服务没给出接口：" + n);
+            int i = hostOf(n);
+            unbind();
+            if (!started) return;
+            if (i >= 0 && i + 1 < HOSTS.length) bindFrom(i + 1);
+            else none();
+        }
     };
 
     public Uiplus(Context ctx, Listener listener) {
@@ -178,25 +206,63 @@ public final class Uiplus implements Host {
         backend = false;
         failAll("SESSION_CLOSED", "已断开");
         if (s != null && r != null) work.post(() -> call(r, T_CLOSE, s, null, false));
-        if (bound) { try { ctx.unbindService(conn); } catch (Exception ignored) { } }
-        bound = false;
-        if (r != null) { try { r.unlinkToDeath(death, 0); } catch (Exception ignored) { } }
-        remote = null;
+        unbind();
     }
 
-    private void bind() {
-        listener.onState("connecting", "正在连接宿主…");
-        Intent it = new Intent().setClassName(PKG, SVC);
-        try {
-            bound = ctx.bindService(it, conn, Context.BIND_AUTO_CREATE);
-        } catch (SecurityException e) {
-            bound = false;
-        }
-        if (!bound) {
-            listener.onState("error", "没找到宿主的 UiPlus 服务（要装 2.2.1.10 及以后的宿主）");
-            retry(10000);
-        }
+    /** 解开这次绑定。客户端自己 unbind 不会走到 onServiceDisconnected。 */
+    private void unbind() {
+        if (bound) { try { ctx.unbindService(conn); } catch (Exception ignored) { } }
+        bound = false;
+        IBinder r = remote;
+        remote = null;
+        if (r != null) { try { r.unlinkToDeath(death, 0); } catch (Exception ignored) { } }
     }
+
+    private void bind() { bindFrom(0); }
+
+    /**
+     * 从下标 i 起按顺序绑。bindService 返回 false（服务不在、或系统拒绝）才试下一个。
+     * 优先宿主一旦绑上就停在它上面：开会话被拒绝只是解开，过一会儿从 BydModule 重新开始，不因为拒绝改连另一个。
+     */
+    private void bindFrom(int i) {
+        if (!started) return;
+        if (i >= HOSTS.length) { none(); return; }
+        String pkg = HOSTS[i][0], svc = HOSTS[i][1], name = HOSTS[i][2];
+        listener.onState("connecting", "正在连接 " + name + "…");
+        Intent it = new Intent().setClassName(pkg, svc);
+        boolean ok;
+        try {
+            ok = ctx.bindService(it, conn, Context.BIND_AUTO_CREATE);
+        } catch (Exception e) {
+            ok = false;
+            Log.w(TAG, "bind " + name, e);
+        }
+        if (!ok) {
+            Log.w(TAG, name + " 绑不上或没有这个服务");
+            bindFrom(i + 1);
+            return;
+        }
+        bound = true;
+        host = i;
+        Log.w(TAG, "bind " + name + " → " + svc);
+    }
+
+    private void none() {
+        host = -1;
+        listener.onState("error", "没找到宿主的 UiPlus 服务（BydModule 和 UiSetting 都没有；要装 2.2.1.10 及以后）");
+        retry(10000);
+    }
+
+    private int hostOf(ComponentName n) {
+        if (n != null) {
+            String pkg = n.getPackageName();
+            for (int i = 0; i < HOSTS.length; i++) if (HOSTS[i][0].equals(pkg)) return i;
+        }
+        return host;
+    }
+
+    private String nameOf(int i) { return i >= 0 && i < HOSTS.length ? HOSTS[i][2] : "宿主"; }
+    private String hostName() { return nameOf(host); }
 
     private void lost(String why) {
         if (!started) return;
@@ -205,9 +271,7 @@ public final class Uiplus implements Host {
         backend = false;
         failAll("SESSION_CLOSED", why);
         listener.onState("closed", why + "，重新连接…");
-        if (bound) { try { ctx.unbindService(conn); } catch (Exception ignored) { } }
-        bound = false;
-        remote = null;
+        unbind();
         gen++;
         retry(2000);
     }
@@ -239,23 +303,24 @@ public final class Uiplus implements Host {
         final String o = out, e = err;
         main.post(() -> {
             if (g != gen || !started) return;
-            Log.w(TAG, "openSession → " + o + (e != null ? " / " + e : ""));
+            Log.w(TAG, "openSession " + hostName() + " → " + o + (e != null ? " / " + e : ""));
             try {
                 JSONObject j = new JSONObject(o == null ? "{}" : o);
                 if (j.has("error")) {
                     JSONObject x = j.getJSONObject("error");
-                    listener.onState("error", "宿主拒绝了：" + x.optString("message", x.optString("code")));
+                    listener.onState("error", hostName() + " 拒绝了：" + x.optString("message", x.optString("code")));
+                    // 服务是在的，只是这次会话被拒：解开后过一会儿仍从 BydModule 重新绑，不改去 UiSetting
+                    unbind();
                     retry(15000);
-                    bound = false;
                     return;
                 }
                 JSONObject res = j.getJSONObject("result");
                 sid = res.getString("sessionId");
                 backend = res.optBoolean("backendReady");
                 perms(res.optJSONObject("permissions"));
-                listener.onState("ready", res.optBoolean("backendReady") ? "已连接" : "已连接（宿主后端还没好）");
+                listener.onState("ready", res.optBoolean("backendReady") ? "已连接 " + hostName() : "已连接 " + hostName() + "（宿主后端还没好）");
             } catch (Exception x) {
-                listener.onState("error", "连不上宿主：" + (e != null ? e : x.getMessage()));
+                listener.onState("error", "连不上 " + hostName() + "：" + (e != null ? e : x.getMessage()));
                 lost("会话没开成");
             }
         });
@@ -351,8 +416,8 @@ public final class Uiplus implements Host {
             String ev = m.optString("event");
             Log.w(TAG, "session event: " + json);
             if ("authorizationChanged".equals(ev)) perms(m.optJSONObject("permissions"));
-            else if ("backendReady".equals(ev)) { backend = true; listener.onState("ready", "已连接"); }
-            else if ("closing".equals(ev)) lost("宿主关了会话");
+            else if ("backendReady".equals(ev)) { backend = true; listener.onState("ready", "已连接 " + hostName()); }
+            else if ("closing".equals(ev)) lost(hostName() + " 关了会话");
             return;
         }
         if (m.has("subscriptionId")) listener.onEvent(m);

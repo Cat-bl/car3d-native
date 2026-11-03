@@ -2,7 +2,7 @@
 
 比亚迪车机上的 3D 车况应用。放进车机的多窗口（双画中画）或悬浮窗口里，一台 3D 车模跟着真实车况动。
 
-车况来自 4.5UI（宿主应用 BydModule）。画面用 Java + OpenGL ES 3.0 直接画，不经过浏览器内核；不碰它、车况也没变的时候一帧都不画，不占处理器。
+车况来自 4.5UI 的 UiPlus（宿主优先 BydModule，没有则 UiSetting）。画面用 Java + OpenGL ES 3.0 直接画，不经过浏览器内核；不碰它、车况也没变的时候一帧都不画，不占处理器。
 
 ## 车模跟着车况动
 
@@ -56,11 +56,11 @@
 
 ## 没有车机时
 
-在模拟器或普通安卓设备上（没装 4.5UI，或者不是比亚迪车机），应用会用内置的调试数据：一台停着的车、三首调试歌。设置最下面的"调试面板"里能改任意一项车况，看车模和界面怎么变。
+在模拟器或普通安卓设备上（BydModule 和 UiSetting 都没装，或者不是比亚迪车机），应用会用内置的调试数据：一台停着的车、三首调试歌。设置最下面的"调试面板"里能改任意一项车况，看车模和界面怎么变。车上只要装着其中一个宿主，就走真宿主。
 
 ## 在车上用
 
-要有：比亚迪车机（Android 9 以上），装好 4.5UI（宿主应用 BydModule，包名 `com.wzw.bydmodule`）。实车用过的 4.5UI 版本是 2.2.1.6 到 2.2.1.18，更早的版本可能还没有给外部应用的接口。
+要有：比亚迪车机（Android 9 以上），装好一个 UiPlus 宿主。优先 4.5UI（BydModule，包名 `com.wzw.bydmodule`）；没装它时用 UiSetting（包名 `com.wzw.uisetting`）。两个都在时只连 BydModule。实车用过的 4.5UI 版本是 2.2.1.6 到 2.2.1.18，更早的版本可能还没有给外部应用的接口。
 
 1. 把 APK 装到车机上，比如 `adb install -r xxx.apk`。
 2. 在比亚迪「系统加速 → 应用加速管理」里给它打开"允许在后台运行"。不开的话，车机内存紧张时宿主的授权页一盖上来，系统就会把应用结束，授权申请跟着作废。
@@ -72,7 +72,9 @@
 - uiplus Android 接口（这个应用用的）：https://u223v6sxpn.apifox.cn
 - uiplus JS 接口（网页卡片用的）：https://1yquh73bv5.apifox.cn
 
-应用绑定宿主的 `com.wzw.bydmodule/.uiplus.UiplusExternalService`，开会话、申请授权，再按方法名发请求、收订阅推送；方法名和参数同网页卡片的 `window.uiplus`。对接时踩过的坑（授权页、宿主后端晚好、会话超时等）写在 `src/` 里 `Uiplus.java` 的开头。
+应用按顺序绑定宿主服务：先 `com.wzw.bydmodule/.uiplus.UiplusExternalService`，绑不上或没有这个服务再 `com.wzw.uisetting/.uiplus.external.UiplusExternalService`。开会话用的 AIDL 描述符固定是 `com.wzw.bydmodule.uiplus.IUiplusApi` / `IUiplusCallback`（连 UiSetting 时也不改写）。然后申请授权，再按方法名发请求、收订阅推送；方法名和参数同网页卡片的 `window.uiplus`。对接时踩过的坑（授权页、宿主后端晚好、会话超时等）写在 `src/` 里 `Uiplus.java` 的开头。
+
+车上怎么确认连的是哪一个：只装 BydModule 时应连上 BydModule；只装 UiSetting 时应连上 UiSetting；两个都装时仍是 BydModule。连上、还没授权时，说明层上方有一行「已连接 BydModule」或「已连接 UiSetting」。logcat 过滤 `car3d` 能看到 `bind BydModule` / `已连上 UiSetting`。两边都没有时，说明层提示两个宿主都没有，隔一会儿从头再试。
 
 ## 从源码打包
 
@@ -108,8 +110,8 @@ node build.mjs --install  # 打完用 adb install -r 装上（adb 要在 PATH �
 | 文件 | 做什么 |
 |---|---|
 | `MainActivity.java` | 入口：连宿主、授权、订阅、设置、导入车模包、全屏 |
-| `Uiplus.java` | 宿主给外部应用的接口（Binder），文件开头有完整说明 |
-| `DebugHost.java` / `DebugPanel.java` | 没有车机时的调试数据和调试面板 |
+| `Uiplus.java` | 宿主给外部应用的接口（Binder）。先绑 BydModule，失败再绑 UiSetting；文件开头有完整说明 |
+| `DebugHost.java` / `DebugPanel.java` | 两个宿主都没装、或不是车机时的调试数据和调试面板 |
 | `CarData.java` / `CarStat.java` | 订阅车况、解码；车况图标、底部数据 |
 | `CarPage.java` | 建车、车况怎么动、灯、镜头、手势 |
 | `CarModel.java` / `GeoCache.java` / `Settings.java` | 车模存取、配置校验、默认车模的内置配置；解好的几何缓存；设置存取 |

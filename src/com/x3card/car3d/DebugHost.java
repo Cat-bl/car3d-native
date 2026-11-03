@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 调试宿主（照网页版 demo3d/debughost.js）：没装宿主、或者这台机器不是比亚迪车机（模拟器、手机）时顶替真宿主，
+ * 调试宿主（照网页版 demo3d/debughost.js）：BydModule 和 UiSetting 都没装、或者这台机器不是比亚迪车机（模拟器、手机）时顶替真宿主，
  * 照接口文档的样子返回数据、接受调用，应用照常走车机上那条路（新版宿主格式：{data: 业务树}、数字编码、同节点伴随属性；订阅首次全量、之后只推变了的叶子）。
  * 车况默认是一台停着的车，不会自己变：调试面板（DebugPanel）里选了哪项才改哪项、勾了"自动"的才自己变。
  * 原生版用得到的都有：宿主信息、能力目录、车况 / 系统数据的查询和订阅、系统属性、媒体快照与整首歌词、80 项原生操作（参数按目录校验，对得上车况字段的改模拟车况）；
@@ -32,10 +32,10 @@ import java.util.Set;
  * 字段目录是 assets 的 fields.json（全部车况也用），操作目录是 actions.json（_apk/car3d/assets.mjs 从网页版的目录里拿出来）。改过的存在 SharedPreferences d3debug
  */
 final class DebugHost implements Host {
-    /** 用不用调试宿主：没装宿主，或者没有比亚迪的系统应用（不是车机）。车上永远走真宿主 */
+    /** 用不用调试宿主：两个 UiPlus 宿主都没装，或者没有比亚迪的系统应用（不是车机）。车上只要装着其中一个就走真宿主，由 Uiplus 先试 BydModule 再试 UiSetting */
     static boolean wanted(Context c) {
         PackageManager pm = c.getPackageManager();
-        if (!installed(pm, "com.wzw.bydmodule")) return true;
+        if (!installed(pm, "com.wzw.bydmodule") && !installed(pm, "com.wzw.uisetting")) return true;
         for (String p : new String[] { "com.byd.car.server", "com.byd.autovoice", "com.byd.rapidmode", "com.byd.carsettings", "com.byd.systemsettings" }) if (installed(pm, p)) return false;
         return true;
     }
