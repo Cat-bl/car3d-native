@@ -128,6 +128,6 @@ node build.mjs --install  # 打完用 adb install -r 装上（adb 要在 PATH �
 
 ## 许可
 
-- 资源的许可：`assets/LICENSE-car.txt`、`assets/LICENSE-outfit.txt`、`assets/LICENSE-wrap-fonts.txt`。
+- 资源的许可：`assets/LICENSE-car.txt`、`assets/LICENSE-outfit.txt`、`assets/LICENSE-sgsr.txt`、`assets/LICENSE-wrap-fonts.txt`。
 - 默认车模 W70 是 CC BY-NC-SA 4.0：**不能商用**，改了要按同样的许可发出去，署名见 `assets/LICENSE-car.txt`。
-- 照着 three.js、meshoptimizer 搬过来的代码：`LICENSE-third-party.txt`（MIT）。
+- 照着 three.js、meshoptimizer、Snapdragon GSR 搬过来的代码：`LICENSE-third-party.txt`（MIT、BSD-3-Clause）。

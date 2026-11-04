@@ -5,6 +5,8 @@
 // 资源：ASSETS 是 APK 的 assets 根目录（Windows 上的 aapt2 把子目录写成反斜杠，安卓找不到，所以只放根目录）；noCompress 是不压缩的扩展名
 // （字体、车模这类系统直接映射着读，不用整个解压进内存）。
 // 签名钥匙 KS 没有就生成一把（密码 android）：宿主按签名 SHA-256 认应用，换了钥匙要重新授权，已经装着的也没法覆盖安装。
+// 原生代码（工程里有 jni/ 时才要 NDK：环境变量 ANDROID_NDK_HOME / ANDROID_NDK_ROOT，没设从 ANDROID_HOME/ndk 里找版本最高的）：
+// jni/ 下的 .c / .cpp 编成 lib<包名最后一段>.so（arm64-v8a 给车机、x86_64 给模拟器，C++ 标准库静态链进去，链接 vulkan、android、log、jnigraphics）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -25,6 +27,8 @@ export function tools(def = {}) {
   }
   BT = BT || def.BT; JAR = JAR || def.JAR;
   const JDK = process.env.JAVA_HOME || (def.JDK && fs.existsSync(def.JDK) ? def.JDK : null);
+  let NDK = process.env.ANDROID_NDK_HOME || process.env.ANDROID_NDK_ROOT || (sdk ? newest(path.join(sdk, 'ndk')) : null);
+  if (!NDK && def.NDK && fs.existsSync(def.NDK)) NDK = def.NDK;
   const miss = [];
   if (!BT || !fs.existsSync(path.join(BT, exe('aapt2')))) miss.push('Android build-tools（设 ANDROID_BUILD_TOOLS 或 ANDROID_HOME）');
   if (!JAR || !fs.existsSync(JAR)) miss.push('android.jar（设 ANDROID_JAR 或 ANDROID_HOME，要装 platforms;android-30）');
@@ -40,7 +44,7 @@ export function tools(def = {}) {
     }
     return r.stdout || '';
   }
-  return { BT, JAR, JDK, bin, bt, run };
+  return { BT, JAR, JDK, NDK, bin, bt, run };
 }
 function files(dir, ext) {
   const out = [];
@@ -52,6 +56,28 @@ export function meta(SRC) {
   const man = fs.readFileSync(path.join(SRC, 'AndroidManifest.xml'), 'utf8');
   const label = (fs.readFileSync(path.join(SRC, 'res', 'values', 'strings.xml'), 'utf8').match(/name="app_name">([^<]+)</) || [0, path.basename(SRC)])[1].trim();
   return { label, ver: (man.match(/android:versionName="([^"]+)"/) || [0, ''])[1], pkg: (man.match(/package="([^"]+)"/) || [0, ''])[1] };
+}
+
+const ABIS = { 'arm64-v8a': 'aarch64-linux-android', x86_64: 'x86_64-linux-android' };
+/** 编 jni/：返回 APK 里的原生库路径（相对 OUT/native），没有 jni/ 是空的 */
+function nativeBuild(SRC, OUT, tk, rel) {
+  const JNI = path.join(SRC, 'jni'), libs = [];
+  if (!fs.existsSync(JNI)) return libs;
+  if (!tk.NDK) { console.error('找不到 NDK（设 ANDROID_NDK_HOME，或装在 ANDROID_HOME/ndk 下）'); process.exit(1); }
+  const tag = process.platform === 'win32' ? 'windows-x86_64' : process.platform === 'darwin' ? 'darwin-x86_64' : 'linux-x86_64';
+  const llvm = path.join(tk.NDK, 'toolchains', 'llvm', 'prebuilt', tag);
+  const srcs = files(JNI, '.cpp').concat(files(JNI, '.c')).map(rel);
+  const name = 'lib' + meta(SRC).pkg.split('.').pop() + '.so';
+  Object.keys(ABIS).forEach((abi) => {
+    const dir = path.join(OUT, 'native', 'lib', abi);
+    fs.mkdirSync(dir, { recursive: true });
+    tk.run(path.join(llvm, 'bin', exe('clang++')), ['--target=' + ABIS[abi] + '28', '--sysroot=' + path.join(llvm, 'sysroot'),
+      '-std=c++17', '-O2', '-fPIC', '-shared', '-fvisibility=hidden', '-ffunction-sections', '-fdata-sections', '-Wall',
+      '-static-libstdc++', '-Wl,--gc-sections', '-Wl,--build-id=none', '-Wl,-z,max-page-size=16384', '-s',
+      '-o', rel(path.join(dir, name))].concat(srcs, ['-lvulkan', '-landroid', '-llog', '-ljnigraphics']), { cwd: SRC });
+    libs.push('lib/' + abi + '/' + name);
+  });
+  return libs;
 }
 
 /**
@@ -70,6 +96,8 @@ export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress
   const rel = (p) => path.relative(SRC, p) || '.', ascii = (p) => /^[ -~]*$/.test(p);
   let JAR_N = JAR;
   if (!ascii(JAR)) { JAR_N = path.join(OUT, 'android.jar'); fs.copyFileSync(JAR, JAR_N); }
+  // 0b. 原生代码：C++ → OUT/native/lib/<ABI>/lib<名>.so（第 4 步放进 APK）
+  const libs = nativeBuild(SRC, OUT, tk, rel);
   // 1. 资源：编译、链接出不带代码的 APK（带上 assets），顺便生成 R.java
   run(bt('aapt2'), ['compile', '--dir', rel(path.join(SRC, 'res')), '-o', rel(path.join(OUT, 'res.zip'))], { cwd: SRC });
   run(bt('aapt2'), ['link', '-o', rel(path.join(OUT, 'base.apk')), '-I', JAR_N === JAR ? JAR : rel(JAR_N), '--manifest', 'AndroidManifest.xml']
@@ -77,11 +105,14 @@ export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress
   // 2. Java → class（按 Java 8 编译，只链接 android.jar；lambda 要的 LambdaMetafactory 在 build-tools 的 core-lambda-stubs.jar 里，d8 再把它脱糖）
   const java = files(path.join(SRC, 'src'), '.java').concat(files(path.join(OUT, 'gen'), '.java'));
   run(bin('javac'), ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', JAR + path.delimiter + path.join(BT, 'core-lambda-stubs.jar'), '-Xlint:-options', '-d', path.join(OUT, 'classes')].concat(java));
-  // 3. class → dex
-  run(bin('java'), ['-cp', path.join(BT, 'lib', 'd8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '28', '--lib', JAR, '--output', path.join(OUT, 'dex')]
-    .concat(files(path.join(OUT, 'classes'), '.class')));
+  // 3. class → dex（先打成一个 jar 再交给 d8：class 文件多、目录深时一个个列在命令行上会超过 Windows 的长度限制）
+  const classesJar = path.join(OUT, 'classes.jar');
+  run(bin('jar'), ['cf', classesJar, '-C', path.join(OUT, 'classes'), '.']);
+  run(bin('java'), ['-cp', path.join(BT, 'lib', 'd8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '28', '--lib', JAR, '--output', path.join(OUT, 'dex'), classesJar]);
   // 4. dex 放进 APK（aapt add 按相对路径放，所以在 dex 目录里执行）
   run(bt('aapt'), ['add', path.join('..', 'base.apk'), 'classes.dex'], { cwd: path.join(OUT, 'dex') });
+  // 原生库同样按相对路径放（APK 里的路径要正斜杠，所以自己拼，不用 path.join）
+  if (libs.length) run(bt('aapt'), ['add', path.join('..', 'base.apk')].concat(libs), { cwd: path.join(OUT, 'native') });
   // 5. 对齐、签名
   run(bt('zipalign'), ['-p', '-f', '4', 'base.apk', 'aligned.apk'], { cwd: OUT });
   if (!fs.existsSync(KS)) {

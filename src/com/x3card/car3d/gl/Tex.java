@@ -27,6 +27,8 @@ public final class Tex {
     public int id, version = 1, uploaded;
     /** 离屏缓冲的贴图：显存归 RT 管 */
     public boolean target;
+    /** 绑到哪个目标（环境图烘成的立方体贴图是 GL_TEXTURE_CUBE_MAP，见 EnvCube） */
+    public int glTarget = GLES30.GL_TEXTURE_2D;
     /** 各向异性过滤（同 texture.anisotropy；显卡不支持就不设） */
     public int anisotropy = 1;
     private static int maxAniso = -1;
@@ -73,7 +75,7 @@ public final class Tex {
     public void bind(int unit) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + unit);
         if (id == 0) { int[] a = new int[1]; GLES30.glGenTextures(1, a, 0); id = a[0]; }
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, id);
+        GLES30.glBindTexture(glTarget, id);
         if (!target && uploaded != version) {
             if (pixels == null && src != null && pending != null) take();
             if (pixels == null && src != null) decode();

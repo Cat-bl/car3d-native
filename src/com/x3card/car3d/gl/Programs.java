@@ -1,5 +1,7 @@
 package com.x3card.car3d.gl;
 
+import android.opengl.GLES30;
+
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -27,6 +29,20 @@ public final class Programs {
         for (Iterator<String> it = l.keys(); it.hasNext(); ) { String k = it.next(); JSONObject s = l.getJSONObject(k); LIB.put(k, new String[] { s.getString("vs"), s.getString("fs") }); }
         JSONObject po = o.optJSONObject("post");
         if (po != null) for (Iterator<String> it = po.keys(); it.hasNext(); ) { String k = it.next(); JSONObject s = po.getJSONObject(k); POST.put(k, new String[] { s.getString("vs"), s.getString("fs") }); }
+        // ---- 环境图换成立方体贴图（EnvCube 烘的；材质带 D3_ENVCUBE 时）：粗糙度换算原样用 three 的，清楚的几级一次 textureLod，模糊的取立方体贴图数组相邻两层 ----
+        String cu = CHUNK.get("cube_uv_reflection_fragment");
+        int r0 = cu.indexOf("#define cubeUV_r0"), tc = cu.indexOf("vec4 textureCubeUV(");
+        if (r0 > 0 && tc > r0) CHUNK.put("cube_uv_reflection_fragment", cu + "\n#ifdef D3_ENVCUBE\n\t" + cu.substring(r0, tc) +
+            "vec4 textureCubeUV( samplerCube envMap, vec3 sampleDir, float roughness ) {\n" +
+            "\t\tfloat mip = clamp( roughnessToMip( roughness ), cubeUV_m0, D3_ENV_MAX_MIP );\n" +
+            "\t\tif ( mip >= 4.0 ) return vec4( textureLod( envMap, sampleDir, D3_ENV_MAX_MIP - mip ).rgb, 1.0 );\n" +
+            "\t\tfloat f = 4.0 - mip, fi = floor( f ), ff = f - fi;\n" +
+            "\t\tvec3 c0 = texture( envMapX, vec4( sampleDir, fi ) ).rgb;\n" +
+            "\t\tif ( ff == 0.0 ) return vec4( c0, 1.0 );\n" +
+            "\t\treturn vec4( mix( c0, texture( envMapX, vec4( sampleDir, fi + 1.0 ) ).rgb, ff ), 1.0 );\n" +
+            "\t}\n#endif\n");
+        CHUNK.put("envmap_physical_pars_fragment", CHUNK.get("envmap_physical_pars_fragment").replace("#if defined( ENVMAP_TYPE_CUBE_UV )", "#if defined( ENVMAP_TYPE_CUBE_UV ) || defined( D3_ENVCUBE )"));
+        CHUNK.put("lights_fragment_maps", CHUNK.get("lights_fragment_maps").replace("defined( ENVMAP_TYPE_CUBE_UV )", "( defined( ENVMAP_TYPE_CUBE_UV ) || defined( D3_ENVCUBE ) )"));
         // ---- main.js：光照按中精度算（材质带 D3_LOWP 时） ----
         String LO = "#ifdef D3_MP\nprecision mediump float;\n#endif\n", HI = "#ifdef D3_MP\nprecision highp float;\n#endif\n";
         String[] keep = { "uv_pars_fragment", "uv2_pars_fragment", "iridescence_fragment", "cube_uv_reflection_fragment", "normal_pars_fragment", "transmission_pars_fragment",
@@ -68,6 +84,9 @@ public final class Programs {
         public String shaderID, shaderName;
         public Map<String, String> defines;
         public int outputEncoding = SRGB, toneMapping, envHeight, numDir, numDirShadow;
+        /** 环境图是 EnvCube 烘的立方体贴图（envCubeMip：最清楚那级对应 cubeUV 的第几级） */
+        public boolean envCube;
+        public int envCubeMip;
         public boolean map, envMap, aoMap, lightMap, emissiveMap, bumpMap, normalMap, objectSpaceNormal, clearcoat, clearcoatMap, clearcoatRoughnessMap, clearcoatNormalMap,
             iridescence, iridescenceMap, iridescenceThicknessMap, roughnessMap, metalnessMap, specularIntensityMap, specularColorMap, opaque, alphaMap, alphaTest,
             sheen, sheenColorMap, sheenRoughnessMap, transmission, transmissionMap, thicknessMap, vertexTangents, vertexColors, vertexAlphas, vertexUvs, uvsVertexOnly,
@@ -90,7 +109,9 @@ public final class Programs {
         p.outputEncoding = outputEncoding;
         Tex em = std ? env : null;
         p.envMap = em != null;
-        p.envHeight = em != null ? em.height : 0;
+        p.envCube = em != null && em.glTarget == GLES30.GL_TEXTURE_CUBE_MAP;
+        p.envCubeMip = p.envCube && em.ud.get("maxMip") instanceof Integer ? (Integer) em.ud.get("maxMip") : 0;
+        p.envHeight = em != null && !p.envCube ? em.height : 0;
         p.map = m.map != null; p.lightMap = m.lightMap != null; p.aoMap = m.aoMap != null; p.emissiveMap = m.emissiveMap != null;
         p.bumpMap = m.bumpMap != null; p.normalMap = m.normalMap != null; p.objectSpaceNormal = m.objectSpaceNormal;
         boolean cc = m.clearcoat > 0, ir = m.iridescence > 0;
@@ -127,7 +148,7 @@ public final class Programs {
     public static String key(P p) {
         StringBuilder sb = new StringBuilder(160);
         sb.append(p.shaderID).append(',').append(p.shaderName).append(',').append(defines(p.defines)).append(',')
-            .append(p.outputEncoding).append(',').append(p.toneMapping).append(',').append(p.envHeight).append(',').append(p.numDir).append(',').append(p.numDirShadow).append(',');
+            .append(p.outputEncoding).append(',').append(p.toneMapping).append(',').append(p.envHeight).append(',').append(p.envCube ? p.envCubeMip : -1).append(',').append(p.numDir).append(',').append(p.numDirShadow).append(',');
         boolean[] b = { p.map, p.envMap, p.aoMap, p.lightMap, p.emissiveMap, p.bumpMap, p.normalMap, p.objectSpaceNormal, p.clearcoat, p.clearcoatMap, p.clearcoatRoughnessMap,
             p.clearcoatNormalMap, p.iridescence, p.iridescenceMap, p.iridescenceThicknessMap, p.roughnessMap, p.metalnessMap, p.specularIntensityMap, p.specularColorMap, p.opaque,
             p.alphaMap, p.alphaTest, p.sheen, p.sheenColorMap, p.sheenRoughnessMap, p.transmission, p.transmissionMap, p.thicknessMap, p.vertexTangents, p.vertexColors,
@@ -207,6 +228,7 @@ public final class Programs {
         f.add(prec); f.add("#define SHADER_NAME " + p.shaderName); add(f, true, defs);
         add(f, p.map, "#define USE_MAP"); add(f, p.envMap, "#define USE_ENVMAP");
         add(f, p.envMap, "#define " + (cubeUV ? "ENVMAP_TYPE_CUBE_UV" : "ENVMAP_TYPE_CUBE")); add(f, p.envMap, "#define ENVMAP_MODE_REFLECTION"); add(f, p.envMap, "#define ENVMAP_BLENDING_NONE");
+        add(f, p.envMap && p.envCube, "#define D3_ENVCUBE\n#define D3_ENV_MAX_MIP " + p.envCubeMip + ".0\nuniform highp samplerCubeArray envMapX;");
         if (cubeUV) {
             f.add("#define CUBEUV_TEXEL_WIDTH " + js(1.0 / (3 * Math.max(Math.pow(2, maxMip), 7 * 16))));
             f.add("#define CUBEUV_TEXEL_HEIGHT " + js(1.0 / p.envHeight));
@@ -245,7 +267,8 @@ public final class Programs {
         pf = "#define varying in\nlayout(location = 0) out highp vec4 pc_fragColor;\n#define gl_FragColor pc_fragColor\n#define gl_FragDepthEXT gl_FragDepth\n#define texture2D texture\n#define textureCube texture\n" +
             "#define texture2DProj textureProj\n#define texture2DLodEXT textureLod\n#define texture2DProjLodEXT textureProjLod\n#define textureCubeLodEXT textureLod\n#define texture2DGradEXT textureGrad\n" +
             "#define texture2DProjGradEXT textureProjGrad\n#define textureCubeGradEXT textureGrad\n" + pf;
-        return new String[] { "#version 300 es\n" + pv + vb, "#version 300 es\n" + pf + fb };
+        String ver = p.envMap && p.envCube || p.defines != null && p.defines.containsKey("D3_ES32") ? "#version 320 es\n" : "#version 300 es\n"; // 立方体贴图数组：ESSL 3.00 里扩展开不了（车机 Adreno 610 实测），3.20 是内置的；顶点、片元要同一个版本
+        return new String[] { ver + pv + vb, ver + pf + fb };
     }
     /** 展开 #include、填灯的数量、展开循环（几十段正则替换，拼一次十几毫秒）：同样的原文、同样的灯数结果一样，记住最近用过的 */
     private static final Map<String, String> EXPANDED = new java.util.LinkedHashMap<String, String>(32, 0.75f, true) {

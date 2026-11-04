@@ -151,11 +151,25 @@ public final class Renderer {
         if (progress != null && (++drawn & 3) == 0) progress.at(drawn / (float) drawTotal);
     }
 
+    /** cubeUV 图集第一次用到时烘成立方体贴图（EnvCube；显卡不支持或烘失败就照旧用图集），烘好图集的显存、内存都还回去 */
+    private Tex cube(Tex atlas) {
+        Object c = atlas.ud.get("cube");
+        if (c instanceof Tex) return (Tex) c;
+        if (c != null || !EnvCube.supported()) return atlas;
+        Tex t = EnvCube.bake(atlas);
+        resetState();
+        setRenderTarget(target); // 烘的时候换过帧缓冲、视口：换回这一帧正在画的
+        if (t == null) { atlas.ud.put("cube", false); return atlas; }
+        atlas.ud.put("cube", t);
+        atlas.dispose(); atlas.keep = false; atlas.pixels = null;
+        return t;
+    }
     public void render(Obj3D root, Camera camera) {
         root.updateMatrixWorld(false);
         if (camera.parent == null) camera.updateMatrixWorld(false);
         cam = camera;
         env = root instanceof Scene ? ((Scene) root).environment : null;
+        if (env != null && env.ud.containsKey("cubeUV")) env = cube(env);
         outEnc = target == null ? outputEncoding : target.xr ? Programs.SRGB : Programs.LINEAR;
         projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         frustum.set(projScreen);
@@ -383,7 +397,7 @@ public final class Renderer {
         if (m.normalMap != null) { p.tex("normalMap", m.normalMap, this); float k = side == Mat.BACK ? -1 : 1; p.v2("normalScale", m.normalScaleX * k, m.normalScaleY * k); }
         if (m.alphaTest > 0) p.f("alphaTest", m.alphaTest);
         Tex e = m.isStandard() ? env : null;
-        if (e != null) { p.tex("envMap", e, this); p.f("flipEnvMap", 1); p.f("reflectivity", m.reflectivity()); p.f("ior", m.ior); p.f("refractionRatio", 0.98f); }
+        if (e != null) { p.tex("envMap", e, this); if (e.ud.get("arr") instanceof Tex) p.tex("envMapX", (Tex) e.ud.get("arr"), this); p.f("flipEnvMap", 1); p.f("reflectivity", m.reflectivity()); p.f("ior", m.ior); p.f("refractionRatio", 0.98f); }
         if (m.lightMap != null) { p.tex("lightMap", m.lightMap, this); p.f("lightMapIntensity", m.lightMapIntensity * (physicallyCorrectLights ? 1 : (float) Math.PI)); }
         if (m.aoMap != null) { p.tex("aoMap", m.aoMap, this); p.f("aoMapIntensity", m.aoMapIntensity); }
         Tex uvm = m.map != null ? m.map : m.normalMap != null ? m.normalMap : m.bumpMap != null ? m.bumpMap : m.roughnessMap != null ? m.roughnessMap : m.metalnessMap != null ? m.metalnessMap

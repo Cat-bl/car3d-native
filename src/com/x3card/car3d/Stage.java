@@ -55,7 +55,7 @@ public final class Stage implements GLSurfaceView.Renderer {
         void wake(boolean on);
         /** 这一帧除了图层 1（灯的点亮层、路面光束）别的都没变 */
         boolean still();
-        /** 连着动的帧：不用多重采样（画进离屏缓冲再 FXAA） */
+        /** 连着动的帧：画小再放大（lowDraw） */
         boolean fast();
         /** 画这一帧之前（地面反射在这里画） */
         void pre(Renderer r);
@@ -153,11 +153,11 @@ public final class Stage implements GLSurfaceView.Renderer {
             else { stillOk = false; plain(); }
         } else {
             stillOk = false;
-            if ((need > 0 || act) && page.fast() && aa) fastDraw();
-            else plain(); // 停下来的那一帧照常按多重采样画
+            if ((need > 0 || act) && page.fast()) lowDraw();
+            else plain(); // 停下来的那一帧照常按原尺寸画（开着抗锯齿就是多重采样）
         }
         dirty = false;
-        if (need == 0 && !act) { stillDrop(); fastDrop(); } // 不动了：存的画面、离屏缓冲用不上了，显存还回去（贴图用的材质留着）
+        if (need == 0 && !act) { stillDrop(); lowDrop(); } // 不动了：存的画面、离屏缓冲用不上了，显存还回去（贴图用的材质留着）
         drawn++;
         stashFree(false);
         page.after();
@@ -182,13 +182,12 @@ public final class Stage implements GLSurfaceView.Renderer {
     private boolean stillOk;
     private Obj3D stillScene;
     private final M4 stillM = new M4(), m4 = new M4();
-    private Mat stillQ, fastQ;
-    private Obj3D stillSc, fastSc;
+    private Mat stillQ;
+    private Obj3D stillSc;
     private final Camera qcam = Camera.ortho(-1, 1, 1, -1, 0, 1);
     private final Map<Mat, Mat> dm = new IdentityHashMap<>();
-    private RT fastRT;
 
-    /** 盖满画布的三角形（贴回存下的画面、FXAA）。材质一直留着：释放了会把着色器程序一起删掉，下次又要编译 */
+    /** 盖满画布的三角形（贴回存下的画面、放大）。材质一直留着：释放了会把着色器程序一起删掉，下次又要编译 */
     private Obj3D quad(Mat m) {
         m.blending = Mat.NO_BLENDING; m.toneMapped = false;
         Mesh q = new Mesh(Shapes.screen(), m);
@@ -291,49 +290,91 @@ public final class Stage implements GLSurfaceView.Renderer {
         dm.clear(); stillScene = null;
     }
 
-    // ================= 连着动的帧：不用多重采样（同 main.js 的 fast） =================
-    // 车机（Adreno 610）是分块画的：画布开着 4 倍多重采样时块数是 4 倍，每块都要把场景里的每次绘制重放一遍。所以开着抗锯齿时，
-    // 转车、镜头转过去这类连着动的帧画进一张不开多重采样的离屏缓冲，再过一遍 FXAA 贴到画布上；停下来那一帧照常按多重采样直接画在画布上。
-    // 离屏缓冲标成 XR 的：着色器按 sRGB 输出（和画到画布上同一套程序），存成普通 8 位不做转换；深度用 24 位的深度贴图
-    private static final String FXAA = "uniform sampler2D tC;\nuniform vec2 uR;\n" +
-        "float L(vec4 c) { return dot(c.rgb, vec3(0.299, 0.587, 0.114)) * 0.7 + c.a * 0.3; }\n" +
-        "void main() {\n  vec2 uv = gl_FragCoord.xy * uR;\n  vec4 cM = texture2D(tC, uv);\n" +
-        "  float lM = L(cM), lNW = L(texture2D(tC, uv + vec2(-1.0, 1.0) * uR)), lNE = L(texture2D(tC, uv + uR)),\n" +
-        "    lSW = L(texture2D(tC, uv - uR)), lSE = L(texture2D(tC, uv + vec2(1.0, -1.0) * uR));\n" +
-        "  float mn = min(lM, min(min(lNW, lNE), min(lSW, lSE))), mx = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n" +
-        "  if (mx - mn < max(0.04, mx * 0.12)) { gl_FragColor = cM; return; }\n" +
-        "  vec2 d = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));\n" +
-        "  float red = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);\n" +
-        "  d = clamp(d / (min(abs(d.x), abs(d.y)) + red), vec2(-8.0), vec2(8.0)) * uR;\n" +
-        "  vec4 a = 0.5 * (texture2D(tC, uv - d / 6.0) + texture2D(tC, uv + d / 6.0));\n" +
-        "  vec4 b = a * 0.5 + 0.25 * (texture2D(tC, uv - d * 0.5) + texture2D(tC, uv + d * 0.5));\n" +
-        "  float lb = L(b);\n  gl_FragColor = lb < mn || lb > mx ? a : b;\n}";
-    private void fastDraw() {
-        if (fastRT == null || fastRT.width != bw || fastRT.height != bh) {
-            fastDrop();
-            fastRT = new RT(bw, bh, GLES30.GL_UNSIGNED_BYTE, true, true, 0, GLES30.GL_LINEAR);
-            fastRT.xr = true;
-            if (fastQ == null) {
-                fastQ = Mat.shader("void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }", FXAA);
-                fastQ.depthTest = false; fastQ.depthWrite = false;
-                fastQ.uniforms.put("tC", new Val(null)); fastQ.uniforms.put("uR", new Val(null));
-                fastSc = quad(fastQ);
+    // ================= 连着动的帧画小再放大（转车提速第 3 步；以前开着抗锯齿时是原尺寸不开多重采样 + FXAA，同 main.js 的 fast） =================
+    // 转车、镜头转过去这类连着动的帧按每边 LOW 倍画进离屏缓冲（不开多重采样：车机 Adreno 610 是分块画的，多重采样时块数翻几倍、每块都重放全部绘制），
+    // 再用高通的 Snapdragon GSR 1（空间放大 + 锐化，一遍）放大贴到画布上；停下来那一帧照常按原尺寸画。实车（画质低）快 11%～14%，转动时细缝线有点断续，用户看过说能接受。
+    // 离屏缓冲标成 XR 的：着色器按 sRGB 输出（和画到画布上同一套程序），存成普通 8 位不做转换；深度用 24 位的深度贴图。放大的着色器照 SnapdragonGameStudios/snapdragon-gsr 的 sgsr1_shader_mobile.frag（RGBA 模式、按绿色通道判断边缘），BSD-3-Clause
+    static final float LOW = 0.75f;
+    private static final String SGSR =
+        "// Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved.  SPDX-License-Identifier: BSD-3-Clause\n" +
+        "precision mediump float;\nuniform mediump sampler2D tC;\nuniform highp vec4 uVI;\nuniform highp vec2 uOut;\n" +
+        "float fastLanczos2( float x ) { float wA = x - 4.0; float wB = x * wA - wA; wA *= wA; return wB * wA; }\n" +
+        "vec2 weightY( float dx, float dy, float c, float std ) { float x = ( dx * dx + dy * dy ) * 0.55 + clamp( abs( c ) * std, 0.0, 1.0 ); float w = fastLanczos2( x ); return vec2( w, w * c ); }\n" +
+        "void main() {\n" +
+        "  highp vec2 uv = gl_FragCoord.xy * uOut;\n" +
+        "  vec4 color = vec4( textureLod( tC, uv, 0.0 ).xyz, 1.0 );\n" +
+        "  highp vec2 imgCoord = uv * uVI.zw + vec2( -0.5, 0.5 );\n" +
+        "  highp vec2 imgCoordPixel = floor( imgCoord );\n" +
+        "  highp vec2 coord = imgCoordPixel * uVI.xy;\n" +
+        "  vec2 pl = imgCoord - imgCoordPixel;\n" +
+        "  vec4 left = textureGather( tC, coord, 1 );\n" +
+        "  float edgeVote = abs( left.z - left.y ) + abs( color.y - left.y ) + abs( color.y - left.z );\n" +
+        "  if ( edgeVote > 8.0 / 255.0 ) {\n" +
+        "    coord.x += uVI.x;\n" +
+        "    vec4 right = textureGather( tC, coord + highp vec2( uVI.x, 0.0 ), 1 );\n" +
+        "    vec4 upDown;\n" +
+        "    upDown.xy = textureGather( tC, coord + highp vec2( 0.0, -uVI.y ), 1 ).wz;\n" +
+        "    upDown.zw = textureGather( tC, coord + highp vec2( 0.0, uVI.y ), 1 ).yx;\n" +
+        "    float mean = ( left.y + left.z + right.x + right.w ) * 0.25;\n" +
+        "    left -= vec4( mean ); right -= vec4( mean ); upDown -= vec4( mean );\n" +
+        "    float cw = color.y - mean;\n" +
+        "    float sum = abs( left.x ) + abs( left.y ) + abs( left.z ) + abs( left.w ) + abs( right.x ) + abs( right.y ) + abs( right.z ) + abs( right.w )\n" +
+        "      + abs( upDown.x ) + abs( upDown.y ) + abs( upDown.z ) + abs( upDown.w );\n" +
+        "    float std = 2.181818 / sum;\n" +
+        "    vec2 aWY = weightY( pl.x, pl.y + 1.0, upDown.x, std );\n" +
+        "    aWY += weightY( pl.x - 1.0, pl.y + 1.0, upDown.y, std );\n" +
+        "    aWY += weightY( pl.x - 1.0, pl.y - 2.0, upDown.z, std );\n" +
+        "    aWY += weightY( pl.x, pl.y - 2.0, upDown.w, std );\n" +
+        "    aWY += weightY( pl.x + 1.0, pl.y - 1.0, left.x, std );\n" +
+        "    aWY += weightY( pl.x, pl.y - 1.0, left.y, std );\n" +
+        "    aWY += weightY( pl.x, pl.y, left.z, std );\n" +
+        "    aWY += weightY( pl.x + 1.0, pl.y, left.w, std );\n" +
+        "    aWY += weightY( pl.x - 1.0, pl.y - 1.0, right.x, std );\n" +
+        "    aWY += weightY( pl.x - 2.0, pl.y - 1.0, right.y, std );\n" +
+        "    aWY += weightY( pl.x - 2.0, pl.y, right.z, std );\n" +
+        "    aWY += weightY( pl.x - 1.0, pl.y, right.w, std );\n" +
+        "    float finalY = aWY.y / aWY.x;\n" +
+        "    float maxY = max( max( left.y, left.z ), max( right.x, right.w ) );\n" +
+        "    float minY = min( min( left.y, left.z ), min( right.x, right.w ) );\n" +
+        "    finalY = clamp( 2.0 * finalY, minY, maxY );\n" +
+        "    float deltaY = clamp( finalY - cw, -23.0 / 255.0, 23.0 / 255.0 );\n" +
+        "    color.xyz = clamp( color.xyz + deltaY, 0.0, 1.0 );\n" +
+        "  }\n" +
+        "  gl_FragColor = color;\n" +
+        "}";
+    private RT lowRT;
+    private Mat lowQ;
+    private Obj3D lowSc;
+    private void lowDraw() {
+        int w = Math.max(1, Math.round(bw * LOW)), h = Math.max(1, Math.round(bh * LOW));
+        if (lowRT == null || lowRT.width != w || lowRT.height != h) {
+            if (lowRT != null) lowRT.dispose();
+            lowRT = new RT(w, h, GLES30.GL_UNSIGNED_BYTE, true, true, 0, GLES30.GL_LINEAR);
+            lowRT.xr = true;
+            if (lowQ == null) {
+                lowQ = Mat.shader("void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }", SGSR);
+                lowQ.defines.put("D3_ES32", "");
+                lowQ.depthTest = false; lowQ.depthWrite = false;
+                lowQ.uniforms.put("tC", new Val(null)); lowQ.uniforms.put("uVI", new Val(null)); lowQ.uniforms.put("uOut", new Val(null));
+                lowSc = quad(lowQ);
             }
-            fastQ.uniforms.get("tC").v = fastRT.texture; fastQ.uniforms.get("uR").v = new float[] { 1f / bw, 1f / bh };
+            lowQ.uniforms.get("tC").v = lowRT.texture;
+            lowQ.uniforms.get("uVI").v = new float[] { 1f / w, 1f / h, w, h };
+            lowQ.uniforms.get("uOut").v = new float[] { 1f / bw, 1f / bh };
         }
-        renderer.setRenderTarget(fastRT);
+        renderer.setRenderTarget(lowRT);
         renderer.clear(true, true);
-        bg.draw(renderer, bw, bh, W, H);
+        bg.draw(renderer, w, h, W, H);
         renderer.autoClear = false;
         renderer.render(page.scene(), page.camera());
         renderer.setRenderTarget(null);
-        renderer.render(fastSc, qcam);
+        renderer.render(lowSc, qcam);
         renderer.autoClear = true;
     }
-    private void fastDrop() {
-        if (fastRT == null) return;
-        fastRT.dispose();
-        fastRT = null;
+    private void lowDrop() {
+        if (lowRT == null) return;
+        lowRT.dispose();
+        lowRT = null;
     }
 
     // ================= 页面 =================
@@ -347,7 +388,7 @@ public final class Stage implements GLSurfaceView.Renderer {
         activate(p);
     }
     private void activate(Page p) {
-        if (page != null) { stillFree(); fastDrop(); page.unload(); }
+        if (page != null) { stillFree(); lowDrop(); page.unload(); }
         if (post != null) { post.dispose(); post = null; }
         page = p; ready = false;
         p.load(this);
