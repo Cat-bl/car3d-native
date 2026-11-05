@@ -37,6 +37,7 @@ final class CarStat {
         ICON.put("spot", "M12 13.3a1.3 1.3 0 1 0 0-2.6 1.3 1.3 0 0 0 0 2.6zM8.6 15.4a4.8 4.8 0 0 1 0-6.8M15.4 15.4a4.8 4.8 0 0 0 0-6.8M5.8 18.2a8.8 8.8 0 0 1 0-12.4M18.2 18.2a8.8 8.8 0 0 0 0-12.4");
         ICON.put("nosim", "M7 3.5h6.5L17 7v13.5H7zM10 11.5l4 4M14 11.5l-4 4");
         ICON.put("belt", "M12 6.6a2.1 2.1 0 1 0 0-4.2 2.1 2.1 0 0 0 0 4.2zM7.5 21v-7.2a4.5 4.5 0 0 1 9 0V21M9 10.4l6.6 8.3M15.6 18.7h2.2");
+        ICON.put("wheel", "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 9.8a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4zM3.6 11.3l6.2.4M14.2 11.7l6.2-.4M12 14.2v6.3");
         ICON.put("heat", "M8 19.5c-1.6-2.2 1.6-4.3 0-6.5s1.6-4.3 0-6.5M12 19.5c-1.6-2.2 1.6-4.3 0-6.5s1.6-4.3 0-6.5M16 19.5c-1.6-2.2 1.6-4.3 0-6.5s1.6-4.3 0-6.5");
         ICON.put("vent", "M7 3.6c.9 0 1.6.6 1.8 1.5L10.2 13H16a2 2 0 0 1 0 4H9.6a2 2 0 0 1-2-1.6L5.6 5.6C5.4 4.5 6.1 3.6 7 3.6zM8 20.5h9M12.5 4.5h4a1.6 1.6 0 1 0-1.6-1.6M13.5 7.5h6a1.6 1.6 0 1 1-1.6 1.6M12.5 10.5h3");
     }
@@ -88,6 +89,7 @@ final class CarStat {
         String heat = seatLv(c, "heating"), vent = seatLv(c, "ventilation");
         if (!heat.isEmpty()) L.add(new Item("warm", "heat", "加热 " + heat));
         if (!vent.isEmpty()) L.add(new Item("on", "vent", "通风 " + vent));
+        if (Boolean.TRUE.equals(c.get("steeringWheel.heating"))) L.add(new Item("warm", "wheel", "方向盘加热"));
         if (Boolean.TRUE.equals(c.get("ac.power"))) {
             Double t = num(c.get("ac.driverTemperature"), true);
             Object f = c.get("ac.fanLevel");

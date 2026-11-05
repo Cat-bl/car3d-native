@@ -27,7 +27,7 @@ import java.util.Set;
  * 调试宿主（照网页版 demo3d/debughost.js）：BydModule 和 UiSetting 都没装、或者这台机器不是比亚迪车机（模拟器、手机）时顶替真宿主，
  * 照接口文档的样子返回数据、接受调用，应用照常走车机上那条路（新版宿主格式：{data: 业务树}、数字编码、同节点伴随属性；订阅首次全量、之后只推变了的叶子）。
  * 车况默认是一台停着的车，不会自己变：调试面板（DebugPanel）里选了哪项才改哪项、勾了"自动"的才自己变。
- * 原生版用得到的都有：宿主信息、能力目录、车况 / 系统数据的查询和订阅、系统属性、媒体快照与整首歌词、80 项原生操作（参数按目录校验，对得上车况字段的改模拟车况）；
+ * 原生版用得到的都有：宿主信息、能力目录、车况 / 系统数据的查询和订阅、系统属性、媒体快照与整首歌词、81 项原生操作（参数按目录校验，对得上车况字段的改模拟车况）；
  * 还能模拟车控权限关着、连接断开、下几次订阅失败。窗口、加载遮罩、模型工具这些原生版用不到，没搬。
  * 字段目录是 assets 的 fields.json（全部车况也用），操作目录是 actions.json（_apk/car3d/assets.mjs 从网页版的目录里拿出来）。改过的存在 SharedPreferences d3debug
  */
@@ -108,6 +108,8 @@ final class DebugHost implements Host {
             // 前后排空调、电机转速、雷达、三种告警：停着的车雷达没在工作（null）；告警照文档说的实车采样——盲区 null、开门预警和后方横向预警 0
             "ac.windMode", 1, "ac.controlMode", 1, "ac.rear.windMode", 1, "ac.rear.temperature", 24, "ac.rear.temperatureUnit", 1, "ac.rear.fanLevel", 0,
             "ac.rear.power", 0, "ac.rear.controlMode", 1, "motor.front.rpm", 0, "motor.rear.rpm", 0,
+            // 方向盘加热 1 关；车门锁、远程解锁只有原码 0 / 1（含义按车型定），随便给一个
+            "steeringWheel.heating", 1, "body.doors.lockState", 1, "body.doors.remoteUnlocking", 0,
             "warning.bsd.left", NULL, "warning.bsd.right", NULL, "warning.dow.left", 0, "warning.dow.right", 0, "warning.rcta.left", 0, "warning.rcta.right", 0);
         for (String k : new String[] { "leftFront", "rightFront", "leftRear", "rightRear", "left", "right", "frontLeftMid", "frontRightMid", "middleRear" }) DEF_V.put("radar.distance." + k, NULL);
         String[] ws = { "frontLeft", "frontRight", "rearLeft", "rearRight" };
@@ -527,6 +529,7 @@ final class DebugHost implements Host {
         });
         EFF.put("vehicle.seat.setHeating", a -> setV("seat." + a[0] + ".heating", i(a[1]) + 1));
         EFF.put("vehicle.seat.setVentilation", a -> setV("seat." + a[0] + ".ventilation", i(a[1]) + 1));
+        EFF.put("vehicle.steeringWheel.setHeating", a -> setV("steeringWheel.heating", b(a[0]) ? 2 : 1));
         EFF.put("vehicle.body.setWindowsMode", a -> windows(String.valueOf(a[0])));
         EFF.put("vehicle.body.operateSunroof", a -> { Integer p = "close".equals(a[0]) ? 0 : "open".equals(a[0]) ? 100 : "comfort".equals(a[0]) ? 80 : "vent".equals(a[0]) ? 15 : null; return p == null ? null : setV("body.sunroof.position", p); });
         EFF.put("vehicle.body.operateSunshade", a -> { Integer p = "close".equals(a[0]) ? 0 : "open".equals(a[0]) ? 100 : null; return p == null ? null : setV("body.sunshade.position", p); });

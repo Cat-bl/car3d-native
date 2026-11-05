@@ -43,7 +43,7 @@ final class CarData {
         "energy.charging.remainingTime", "warning.lowVoltageBatteryFault", "warning.keyBatteryLow",
         "ac.power", "ac.compressor", "ac.driverTemperature", "ac.fanLevel", "ac.circulation", "ac.frontDefrost", "ac.rearDefrost",
         "ac.controlMode", "ac.windMode", "ac.rear.power", "ac.rear.temperature", "ac.rear.fanLevel", "ac.rear.controlMode", "ac.rear.windMode",
-        "seat.driver.heating", "seat.passenger.heating", "seat.driver.ventilation", "seat.passenger.ventilation",
+        "seat.driver.heating", "seat.passenger.heating", "seat.driver.ventilation", "seat.passenger.ventilation", "steeringWheel.heating",
         "seat.driver.beltFastened",
         "energy.operationMode", "energy.mode", "energy.regenerationLevel", "energy.simulator", "energy.socSave", "energy.socTarget",
         "energy.wirelessCharging", "energy.wirelessChargingState", "environment.pm25.indoor", "environment.pm25.indoorLevel", "environment.slope", "engine.rpm", "audio.muted",
@@ -65,6 +65,7 @@ final class CarData {
             "warning.lowVoltageBatteryFault", "seat.driver.beltFastened", "ac.power", "ac.compressor", "ac.frontDefrost", "ac.rearDefrost", "energy.simulator", "body.windows.ventilation",
             "body.windows.halfOpen", "audio.muted", "ac.rear.power" }) DEC.put(k, B01);
         for (String k : new String[] { "light.hazard", "light.daytimeRunning", "light.ambient.musicMode", "light.dynamicColorful", "warning.keyBatteryLow", "energy.wirelessCharging" }) DEC.put(k, B12);
+        DEC.put("steeringWheel.heating", m(1, false, 2, true)); // 方向盘加热：1 关、2 开
         DEC.put("light.brake", m(1, "on", 2, "flash", 3, "off"));
         DEC.put("light.ambient.area", m(1, "front", 2, "rear", 3, "all"));
         DEC.put("light.ambient.color", m(1, "iceBlue", 2, "coldWhite", 3, "warmWhite", 4, "redOrange", 5, "red", 6, "redPurple", 7, "darkBlue"));

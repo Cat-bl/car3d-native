@@ -387,7 +387,7 @@ final class DebugPanel extends Sheet {
     }
     private void host() {
         LinearLayout r = row(false);
-        r.addView(label("车控权限", null, "关着：80 项原生操作（含车顶空调键、播放控制）都返回 PERMISSION_DENIED"), new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(label("车控权限", null, "关着：81 项原生操作（含车顶空调键、播放控制）都返回 PERMISSION_DENIED"), new LinearLayout.LayoutParams(0, -2, 1));
         r.addView(new Switch(getContext(), D.control(), () -> { D.setControl(!D.control()); rows(); }), new LinearLayout.LayoutParams(px(0.78f), px(0.44f)));
         r = hostRow("连接", "断开：订阅收到 BACKEND_UNAVAILABLE、请求失败；恢复时补发完整快照");
         r.addView(segOf(Arrays.asList(true, false), new String[] { "正常", "断开" }, D.online(), 0, v -> { D.setConnected((Boolean) v); rows(); }));
